@@ -43,7 +43,7 @@ class Phase2ExecutionTests(unittest.TestCase):
             db.commit()
             db.close()
             store = Store(path)
-            self.assertEqual(store.db.execute("PRAGMA user_version").fetchone()[0], 2)
+            self.assertEqual(store.db.execute("PRAGMA user_version").fetchone()[0], 3)
             self.assertEqual(store.session(1)["stop_reason"], "old")
             self.assertIn("exit_code", {r[1] for r in store.db.execute("PRAGMA table_info(trials)")})
             store.close()

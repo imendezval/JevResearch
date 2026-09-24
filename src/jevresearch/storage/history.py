@@ -40,10 +40,20 @@ class Store:
           started_at REAL, finished_at REAL,
           UNIQUE(session_id, number), UNIQUE(session_id, fingerprint),
           UNIQUE(session_id, config_key), UNIQUE(offer_id));
+        CREATE TABLE IF NOT EXISTS decision_attempts (
+          id INTEGER PRIMARY KEY, session_id INTEGER NOT NULL REFERENCES sessions(id),
+          offer_id INTEGER NOT NULL REFERENCES offers(id),
+          request TEXT NOT NULL, requested_model TEXT NOT NULL,
+          sdk_version TEXT, transport_kind TEXT NOT NULL,
+          status TEXT NOT NULL, response TEXT, selected_id TEXT,
+          error_code TEXT, latency REAL, created_at REAL NOT NULL,
+          finished_at REAL);
+        CREATE INDEX IF NOT EXISTS decision_attempts_offer
+          ON decision_attempts(offer_id, id);
         """)
         # Version 1 was the unversioned Phase 1 database. Preserve its rows.
         version = self.db.execute("PRAGMA user_version").fetchone()[0]
-        if version > 2:
+        if version > 3:
             raise InvariantError(f"unsupported database version {version}")
         columns = {row[1] for row in self.db.execute("PRAGMA table_info(trials)")}
         with self.db:
@@ -51,8 +61,8 @@ class Store:
                                ("stderr_artifact", "TEXT")):
                 if name not in columns:
                     self.db.execute(f"ALTER TABLE trials ADD COLUMN {name} {kind}")
-            if version < 2:
-                self.db.execute("PRAGMA user_version=2")
+            if version < 3:
+                self.db.execute("PRAGMA user_version=3")
 
     def close(self):
         self.db.close()
@@ -81,6 +91,59 @@ class Store:
         return self.db.execute("SELECT * FROM offers WHERE session_id=? AND selected_id IS NULL ORDER BY id DESC LIMIT 1",
                                (sid,)).fetchone()
 
+    def offers(self, sid: int):
+        return self.db.execute("SELECT * FROM offers WHERE session_id=? ORDER BY id", (sid,)).fetchall()
+
+    def decision_attempts(self, sid: int):
+        return self.db.execute("SELECT * FROM decision_attempts WHERE session_id=? ORDER BY id", (sid,)).fetchall()
+
+    def first_decision_request(self, offer_id: int):
+        row = self.db.execute("SELECT request FROM decision_attempts WHERE offer_id=? ORDER BY id LIMIT 1",
+                              (offer_id,)).fetchone()
+        return json.loads(row["request"]) if row else None
+
+    def validated_decision(self, offer_id: int):
+        return self.db.execute("""SELECT * FROM decision_attempts
+            WHERE offer_id=? AND status='validated' ORDER BY id DESC LIMIT 1""",
+                               (offer_id,)).fetchone()
+
+    def mark_unknown_started(self, sid: int):
+        with self.db:
+            self.db.execute("""UPDATE decision_attempts SET status='unknown',
+                error_code='process_interrupted',finished_at=?
+                WHERE session_id=? AND status='started'""", (time.time(), sid))
+
+    def begin_decision(self, sid: int, offer_id: int, prepared: dict, details: dict) -> int:
+        with self.db:
+            offer = self.offer(sid, offer_id)
+            if offer["selected_id"] is not None:
+                raise InvariantError("cannot call controller on selected offer")
+            cur = self.db.execute("""INSERT INTO decision_attempts
+                (session_id,offer_id,request,requested_model,sdk_version,transport_kind,status,created_at)
+                VALUES(?,?,?,?,?,?,'started',?)""",
+                (sid, offer_id, canonical(prepared), details["model"], details.get("sdk_version"),
+                 details["transport"], time.time()))
+        return cur.lastrowid
+
+    def fail_decision(self, attempt_id: int, status: str, error_code: str, latency: float):
+        if status not in ("failed", "unknown"):
+            raise ValueError("invalid decision failure status")
+        with self.db:
+            cur = self.db.execute("""UPDATE decision_attempts SET status=?,error_code=?,latency=?,finished_at=?
+                WHERE id=? AND status='started'""",
+                (status, error_code, latency, time.time(), attempt_id))
+            if cur.rowcount != 1:
+                raise InvariantError("decision attempt is not started")
+
+    def validate_decision(self, attempt_id: int, response: dict, selected_id: str, latency: float):
+        with self.db:
+            cur = self.db.execute("""UPDATE decision_attempts
+                SET status='validated',response=?,selected_id=?,latency=?,finished_at=?
+                WHERE id=? AND status='started'""",
+                (canonical(response), selected_id, latency, time.time(), attempt_id))
+            if cur.rowcount != 1:
+                raise InvariantError("decision attempt is not started")
+
     def offer(self, sid: int, offer_id: int):
         row = self.db.execute("SELECT * FROM offers WHERE session_id=? AND id=?",
                               (sid, offer_id)).fetchone()
@@ -94,7 +157,8 @@ class Store:
                                   (sid, canonical(asdict(state)), canonical([asdict(c) for c in candidates]), rng, time.time()))
         return cur.lastrowid
 
-    def select(self, sid: int, offer_id: int, candidate: Candidate, rng_after: str):
+    def select(self, sid: int, offer_id: int, candidate: Candidate, rng_after: str,
+               decision_attempt_id: int | None = None):
         with self.db:
             offer = self.db.execute("SELECT * FROM offers WHERE id=? AND session_id=?", (offer_id, sid)).fetchone()
             if offer is None or offer["selected_id"] is not None:
@@ -102,6 +166,13 @@ class Store:
             choices = json.loads(offer["candidates"])
             if sum(c["id"] == candidate.id and c == asdict(candidate) for c in choices) != 1:
                 raise InvariantError("selected candidate is not exactly in saved offer")
+            if decision_attempt_id is not None:
+                attempt = self.db.execute("""SELECT * FROM decision_attempts
+                    WHERE id=? AND session_id=? AND offer_id=?""",
+                    (decision_attempt_id, sid, offer_id)).fetchone()
+                if (attempt is None or attempt["status"] != "validated"
+                        or attempt["selected_id"] != candidate.id):
+                    raise InvariantError("decision attempt does not validate this candidate")
             number = self.db.execute("SELECT COUNT(*) FROM trials WHERE session_id=?", (sid,)).fetchone()[0]
             settings = json.loads(self.session(sid)["settings"])
             if number >= settings["budget"]:
@@ -119,6 +190,9 @@ class Store:
             self.db.execute("UPDATE offers SET selected_id=?,rng_after=? WHERE id=?",
                             (candidate.id, rng_after, offer_id))
             self.db.execute("UPDATE sessions SET rng_state=? WHERE id=?", (rng_after, sid))
+            if decision_attempt_id is not None:
+                self.db.execute("UPDATE decision_attempts SET status='selected' WHERE id=?",
+                                (decision_attempt_id,))
 
     def running(self, trial_id: int):
         with self.db:
@@ -148,6 +222,16 @@ class Store:
     def stop(self, sid: int, reason: str):
         with self.db:
             self.db.execute("UPDATE sessions SET status='stopped',stop_reason=? WHERE id=?", (reason, sid))
+
+    def pause(self, sid: int, reason: str):
+        with self.db:
+            self.db.execute("UPDATE sessions SET status='paused',stop_reason=? WHERE id=? AND status!='stopped'",
+                            (reason, sid))
+
+    def resume(self, sid: int):
+        with self.db:
+            self.db.execute("UPDATE sessions SET status='active',stop_reason=NULL WHERE id=? AND status='paused'",
+                            (sid,))
 
     def state(self, sid: int) -> SearchState:
         rows = self.trials(sid)

@@ -21,6 +21,11 @@ def make_spec(task: Task, config: dict, seed: int, source_digest: str,
 
 
 class CandidateGenerator:
+    def __init__(self, max_candidates: int = 8):
+        if max_candidates < 1:
+            raise ValueError("candidate limit must be positive")
+        self.max_candidates = max_candidates
+
     def generate(self, task: Task, state: SearchState, seed: int,
                  source_digest: str) -> tuple[Candidate, ...]:
         seen = {entry["config_key"] for entry in state.history}
@@ -38,4 +43,4 @@ class CandidateGenerator:
                           "spec": asdict(spec)})[:16]
             candidates.append(Candidate(cid, operator, parameters, state.best_trial_id,
                                         dict(config), spec))
-        return tuple(candidates)
+        return tuple(candidates[:self.max_candidates])
