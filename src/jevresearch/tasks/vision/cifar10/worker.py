@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import platform
@@ -51,7 +52,7 @@ def _datasets(details, split, seed):
     return Subset(dataset, split["train_indices"]), Subset(dataset, split["val_indices"])
 
 
-def train(payload):
+def train(payload, checkpoint_path=None):
     import numpy as np
     import torch
     import torch.nn.functional as F
@@ -132,8 +133,24 @@ def train(payload):
                "peak_cuda_allocated_bytes": torch.cuda.max_memory_allocated(device)
                if device.type == "cuda" else None,
                "gpu_active_seconds": None}
+    artifacts = ()
+    if checkpoint_path is not None:
+        temporary = checkpoint_path.with_suffix(".tmp")
+        torch.save(model.state_dict(), temporary)
+        temporary.replace(checkpoint_path)
+        checkpoint_manifest = {"sha256": hashlib.sha256(checkpoint_path.read_bytes()).hexdigest(),
+                               "spec_fingerprint": spec.fingerprint,
+                               "protocol": spec.protocol, "split": spec.data_split,
+                               "model_version": config["model"],
+                               "torch": torch.__version__, "numpy": np.__version__}
+        path = checkpoint_path.with_name("checkpoint-manifest.json")
+        temp_manifest = path.with_suffix(".tmp")
+        temp_manifest.write_text(canonical(checkpoint_manifest) + "\n")
+        temp_manifest.replace(path)
+        artifacts = (f"trial-{payload['trial_id']}/model.pt",
+                     f"trial-{payload['trial_id']}/checkpoint-manifest.json")
     return ExperimentResult("completed", metrics["validation_accuracy"], metrics,
-                            time.monotonic() - training_start)
+                            time.monotonic() - training_start, artifacts=artifacts)
 
 
 def main(argv=None):
@@ -142,8 +159,10 @@ def main(argv=None):
     parser.add_argument("--output", required=True)
     args = parser.parse_args(argv)
     start = time.monotonic()
+    payload = json.loads(Path(args.input).read_text())
     try:
-        result = train(json.loads(Path(args.input).read_text()))
+        checkpoint = Path(args.output).with_name("model.pt") if payload.get("checkpoint_policy") == "best" else None
+        result = train(payload, checkpoint)
     except Exception as exc:
         traceback.print_exc()
         result = ExperimentResult("failed", None, {}, time.monotonic() - start,
@@ -152,6 +171,16 @@ def main(argv=None):
     temporary = output.with_suffix(".tmp")
     temporary.write_text(canonical(asdict(result)) + "\n")
     temporary.replace(output)
+    if "trial_id" in payload:
+        manifest = {"trial_id": payload["trial_id"],
+                    "spec_fingerprint": payload["spec_fingerprint"],
+                    "input_sha256": hashlib.sha256(Path(args.input).read_bytes()).hexdigest(),
+                    "result_sha256": hashlib.sha256(output.read_bytes()).hexdigest(),
+                    "worker_wall_seconds": time.monotonic() - start}
+        path = output.with_name("result-manifest.json")
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(canonical(manifest) + "\n")
+        temporary.replace(path)
 
 
 if __name__ == "__main__":

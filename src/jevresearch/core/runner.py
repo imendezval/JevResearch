@@ -146,7 +146,13 @@ class Runner:
             rows = self.store.trials(sid)
             last = rows[-1]
             if last["status"] == "running":
-                self.store.interrupt(last["id"])
+                spec = ExperimentSpec(**json.loads(last["spec"]))
+                recover = getattr(self.executor, "recover", None)
+                recovered = recover(spec, last["id"]) if recover else None
+                if recovered is None:
+                    self.store.interrupt(last["id"])
+                else:
+                    self.store.finish(last["id"], recovered)
                 state = self.store.state(sid)
                 if last["number"] == 0:
                     self.store.stop(sid, "baseline failed")
