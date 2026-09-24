@@ -10,6 +10,7 @@ dependencies = []
 
 [project.optional-dependencies]
 vision = ["torch==2.5.1", "torchvision==0.20.1", "numpy>=1.24,<3"]
+jev = ["typesafe-sdk==0.7.1"]
 
 [project.scripts]
 jevresearch = "jevresearch.cli:main"
