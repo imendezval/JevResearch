@@ -81,6 +81,13 @@ class Store:
         return self.db.execute("SELECT * FROM offers WHERE session_id=? AND selected_id IS NULL ORDER BY id DESC LIMIT 1",
                                (sid,)).fetchone()
 
+    def offer(self, sid: int, offer_id: int):
+        row = self.db.execute("SELECT * FROM offers WHERE session_id=? AND id=?",
+                              (sid, offer_id)).fetchone()
+        if row is None:
+            raise KeyError(f"offer {offer_id} does not exist in session {sid}")
+        return row
+
     def save_offer(self, sid: int, state: SearchState, candidates: tuple[Candidate, ...], rng: str) -> int:
         with self.db:
             cur = self.db.execute("INSERT INTO offers(session_id,state,candidates,rng_before,created_at) VALUES(?,?,?,?,?)",

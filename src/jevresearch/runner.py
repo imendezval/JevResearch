@@ -125,7 +125,7 @@ class Runner:
                     self.store.stop(sid, "no novel candidates")
                     return state
                 oid = self.store.save_offer(sid, state, candidates, self.store.session(sid)["rng_state"])
-                offer = self.store.db.execute("SELECT * FROM offers WHERE id=?", (oid,)).fetchone()
+                offer = self.store.offer(sid, oid)
             candidates = tuple(_candidate(c) for c in json.loads(offer["candidates"]))
             snapshot = SearchState(**{**json.loads(offer["state"]),
                                       "history": tuple(json.loads(offer["state"])["history"])})

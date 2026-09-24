@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import random
+import sys
+from dataclasses import asdict
 from pathlib import Path
 
 from ....core import SearchState, canonical, digest
@@ -107,6 +109,13 @@ class CifarTask:
                 "model": "small-convnet-v1", "metric": "final-validation-top1",
                 "epochs": self.eval_budget, "batch_size": self.batch_size,
                 "device": self.device, "scheduler": "none"}
+
+    def worker_payload(self, spec):
+        return {"spec": asdict(spec), "details": self.details(), "split": self.split}
+
+    def worker_command(self, input_path, result_path):
+        return [sys.executable, "-m", "jevresearch.cifar_worker",
+                "--input", str(input_path), "--output", str(result_path)]
 
     def baseline(self):
         return {"lr": 0.01, "weight_decay": 0.0001, "optimizer": "sgd",

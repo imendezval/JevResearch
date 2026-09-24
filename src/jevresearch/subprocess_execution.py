@@ -6,9 +6,7 @@ import json
 import os
 import signal
 import subprocess
-import sys
 import time
-from dataclasses import asdict
 from pathlib import Path
 
 from .core import ExperimentResult, canonical
@@ -45,15 +43,14 @@ class SubprocessExecutor:
         out_path, err_path = folder / "stdout.log", folder / "stderr.log"
         if result_path.exists():
             raise RuntimeError("trial result already exists; refusing to overwrite")
-        payload = {"spec": asdict(spec), "details": task.details(), "split": task.split}
+        payload = task.worker_payload(spec)
         input_path.write_text(canonical(payload) + "\n")
         artifacts = tuple(str(p.relative_to(self.run_dir)) for p in
                           (input_path, out_path, err_path, result_path))
         start = time.monotonic()
         with out_path.open("wb") as out, err_path.open("wb") as err:
             command = (self.command(input_path, result_path) if self.command else
-                       [sys.executable, "-m", "jevresearch.cifar_worker",
-                        "--input", str(input_path), "--output", str(result_path)])
+                       task.worker_command(input_path, result_path))
             proc = subprocess.Popen(command,
                                     stdout=out, stderr=err, start_new_session=True)
             try:
