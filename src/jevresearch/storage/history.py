@@ -50,10 +50,28 @@ class Store:
           finished_at REAL);
         CREATE INDEX IF NOT EXISTS decision_attempts_offer
           ON decision_attempts(offer_id, id);
+        CREATE TABLE IF NOT EXISTS studies (
+          id INTEGER PRIMARY KEY, fingerprint TEXT NOT NULL UNIQUE,
+          spec TEXT NOT NULL, source_digest TEXT NOT NULL, overrides TEXT NOT NULL,
+          created_at REAL NOT NULL);
+        CREATE TABLE IF NOT EXISTS study_members (
+          study_id INTEGER NOT NULL REFERENCES studies(id), arm_id TEXT NOT NULL,
+          seed INTEGER NOT NULL, session_id INTEGER UNIQUE REFERENCES sessions(id),
+          blocked_reason TEXT, PRIMARY KEY(study_id,arm_id,seed));
+        CREATE TABLE IF NOT EXISTS study_activity (
+          id INTEGER PRIMARY KEY, study_id INTEGER NOT NULL REFERENCES studies(id),
+          started_at REAL NOT NULL, finished_at REAL, status TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS workers (
+          trial_id INTEGER PRIMARY KEY REFERENCES trials(id), pid INTEGER NOT NULL,
+          start_ticks INTEGER NOT NULL, input_sha256 TEXT NOT NULL,
+          recorded_at REAL NOT NULL);
+        CREATE TABLE IF NOT EXISTS checkpoints (
+          trial_id INTEGER PRIMARY KEY REFERENCES trials(id), path TEXT NOT NULL,
+          sha256 TEXT NOT NULL, status TEXT NOT NULL);
         """)
         # Version 1 was the unversioned Phase 1 database. Preserve its rows.
         version = self.db.execute("PRAGMA user_version").fetchone()[0]
-        if version > 3:
+        if version > 4:
             raise InvariantError(f"unsupported database version {version}")
         columns = {row[1] for row in self.db.execute("PRAGMA table_info(trials)")}
         with self.db:
@@ -61,8 +79,8 @@ class Store:
                                ("stderr_artifact", "TEXT")):
                 if name not in columns:
                     self.db.execute(f"ALTER TABLE trials ADD COLUMN {name} {kind}")
-            if version < 3:
-                self.db.execute("PRAGMA user_version=3")
+            if version < 4:
+                self.db.execute("PRAGMA user_version=4")
 
     def close(self):
         self.db.close()
@@ -73,7 +91,8 @@ class Store:
             raise KeyError(f"session {session_id} does not exist")
         return row
 
-    def create(self, settings: dict, source: dict, rng_state: str, spec: ExperimentSpec) -> int:
+    def create(self, settings: dict, source: dict, rng_state: str, spec: ExperimentSpec,
+               study_member: tuple[int, str, int] | None = None) -> int:
         with self.db:
             cur = self.db.execute("INSERT INTO sessions(settings,source,rng_state,created_at) VALUES(?,?,?,?)",
                                   (canonical(settings), canonical(source), rng_state, time.time()))
@@ -82,7 +101,90 @@ class Store:
                 fingerprint,config_key,status,created_at) VALUES(?,0,'baseline',?,?,?,?,'pending',?)""",
                 (sid, canonical({"kind": "baseline", "seed": spec.seed}), canonical(asdict(spec)),
                  spec.fingerprint, spec.config_key, time.time()))
+            if study_member is not None:
+                self.db.execute("""INSERT INTO study_members(study_id,arm_id,seed,session_id)
+                    VALUES(?,?,?,?)""", (*study_member, sid))
         return sid
+
+    def register_study(self, spec: dict, fingerprint: str, source_digest: str,
+                       overrides: dict) -> int:
+        with self.db:
+            row = self.db.execute("SELECT * FROM studies").fetchone()
+            if row is not None:
+                if row["fingerprint"] != fingerprint or row["spec"] != canonical(spec):
+                    raise InvariantError("study specification or source changed; use a new output root")
+                return row["id"]
+            cur = self.db.execute("""INSERT INTO studies(fingerprint,spec,source_digest,overrides,created_at)
+                VALUES(?,?,?,?,?)""", (fingerprint, canonical(spec), source_digest,
+                                       canonical(overrides), time.time()))
+            return cur.lastrowid
+
+    def study(self):
+        return self.db.execute("SELECT * FROM studies ORDER BY id LIMIT 1").fetchone()
+
+    def study_members(self, study_id: int):
+        return self.db.execute("SELECT * FROM study_members WHERE study_id=? ORDER BY arm_id,seed",
+                               (study_id,)).fetchall()
+
+    def study_member(self, study_id: int, arm_id: str, seed: int):
+        return self.db.execute("""SELECT * FROM study_members
+            WHERE study_id=? AND arm_id=? AND seed=?""", (study_id, arm_id, seed)).fetchone()
+
+    def block_member(self, study_id: int, arm_id: str, seed: int, reason: str):
+        with self.db:
+            self.db.execute("""INSERT INTO study_members(study_id,arm_id,seed,blocked_reason)
+                VALUES(?,?,?,?) ON CONFLICT(study_id,arm_id,seed)
+                DO UPDATE SET blocked_reason=excluded.blocked_reason""",
+                (study_id, arm_id, seed, reason))
+
+    def clear_block(self, study_id: int, arm_id: str, seed: int):
+        with self.db:
+            self.db.execute("""DELETE FROM study_members WHERE study_id=? AND arm_id=? AND seed=?
+                AND session_id IS NULL""", (study_id, arm_id, seed))
+            self.db.execute("""UPDATE study_members SET blocked_reason=NULL
+                WHERE study_id=? AND arm_id=? AND seed=?""", (study_id, arm_id, seed))
+
+    def start_activity(self, study_id: int) -> int:
+        with self.db:
+            cur = self.db.execute("""INSERT INTO study_activity(study_id,started_at,status)
+                VALUES(?,?,'running')""", (study_id, time.time()))
+            return cur.lastrowid
+
+    def finish_activity(self, activity_id: int):
+        with self.db:
+            self.db.execute("""UPDATE study_activity SET finished_at=?,status='completed'
+                WHERE id=? AND status='running'""", (time.time(), activity_id))
+
+    def activity(self, study_id: int):
+        return self.db.execute("SELECT * FROM study_activity WHERE study_id=? ORDER BY id",
+                               (study_id,)).fetchall()
+
+    def mark_unknown_activity(self, study_id: int):
+        with self.db:
+            self.db.execute("""UPDATE study_activity SET status='unknown'
+                WHERE study_id=? AND status='running'""", (study_id,))
+
+    def record_worker(self, trial_id: int, pid: int, start_ticks: int, input_sha256: str):
+        with self.db:
+            self.db.execute("""INSERT OR REPLACE INTO workers
+                (trial_id,pid,start_ticks,input_sha256,recorded_at) VALUES(?,?,?,?,?)""",
+                (trial_id, pid, start_ticks, input_sha256, time.time()))
+
+    def worker(self, trial_id: int):
+        return self.db.execute("SELECT * FROM workers WHERE trial_id=?", (trial_id,)).fetchone()
+
+    def record_checkpoint(self, trial_id: int, path: str, sha256: str):
+        with self.db:
+            self.db.execute("""INSERT OR REPLACE INTO checkpoints(trial_id,path,sha256,status)
+                VALUES(?,?,?,'retained')""", (trial_id, path, sha256))
+
+    def checkpoints(self, sid: int):
+        return self.db.execute("""SELECT c.*,t.number,t.session_id FROM checkpoints c
+            JOIN trials t ON t.id=c.trial_id WHERE t.session_id=? ORDER BY t.number""", (sid,)).fetchall()
+
+    def prune_checkpoint(self, trial_id: int):
+        with self.db:
+            self.db.execute("UPDATE checkpoints SET status='pruned' WHERE trial_id=?", (trial_id,))
 
     def trials(self, sid: int):
         return self.db.execute("SELECT * FROM trials WHERE session_id=? ORDER BY number", (sid,)).fetchall()

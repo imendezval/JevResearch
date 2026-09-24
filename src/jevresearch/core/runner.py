@@ -51,7 +51,8 @@ class Runner:
         self.executor = executor or InlineExecutor()
         self.generator = generator or CandidateGenerator()
 
-    def start(self, budget: int, seed: int) -> int:
+    def start(self, budget: int, seed: int,
+              study_member: tuple[int, str, int] | None = None) -> int:
         if budget < 1:
             raise ValueError("budget must be >= 1")
         if self.task.objective_direction not in ("min", "max"):
@@ -69,7 +70,7 @@ class Runner:
                     "controller_details": getattr(self.controller, "details", lambda: {})(),
                     "candidate_limit": self.generator.max_candidates,
                     "task_details": getattr(self.task, "details", lambda: {})()}
-        return self.store.create(settings, source, initial_rng(seed), baseline)
+        return self.store.create(settings, source, initial_rng(seed), baseline, study_member)
 
     def _compatible(self, sid: int):
         row = self.store.session(sid)
