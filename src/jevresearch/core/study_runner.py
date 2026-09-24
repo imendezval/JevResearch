@@ -125,6 +125,12 @@ class StudyRunner:
                         store.clear_block(study_id, arm.id, seed)
                         sid = member["session_id"] if member and member["session_id"] else runner.start(
                             self.spec.trial_budget, seed, (study_id, arm.id, seed))
+                        if store.trials(sid)[-1]["status"] == "running":
+                            # Reconcile a recorded worker before a conservative
+                            # unknown-time cap can block further scheduling.
+                            # A zero-trial run performs recovery only.
+                            runner.run(sid, 0)
+                            self._checkpoints(store, sid, Path(runner.task.run_dir))
                         while store.session(sid)["status"] != "stopped":
                             observed, unknown, count = self._active(store, study_id)
                             if observed >= self.spec.active_time_budget_seconds or (

@@ -154,7 +154,7 @@ class Runner:
                 else:
                     self.store.finish(last["id"], recovered)
                 state = self.store.state(sid)
-                if last["number"] == 0:
+                if last["number"] == 0 and (recovered is None or recovered.status != "completed"):
                     self.store.stop(sid, "baseline failed")
                     return state
                 continue

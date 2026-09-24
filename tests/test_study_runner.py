@@ -101,12 +101,17 @@ class StudyRunnerTests(unittest.TestCase):
         study_id = runner.run(max_new_trials=1)
         store = Store(runner.root / "study.sqlite")
         sid = store.study_members(study_id)[0]["session_id"]
+        trial = store.trials(sid)[0]
+        with store.db:
+            store.db.execute("UPDATE trials SET status='running',result=NULL WHERE id=?",
+                             (trial["id"],))
         activity_id = store.start_activity(study_id, sid)
         with store.db:
             store.db.execute("UPDATE study_activity SET started_at=started_at-60 WHERE id=?",
                              (activity_id,))
         runner.run()
         self.assertEqual(len(store.trials(sid)), 1)
+        self.assertEqual(store.trials(sid)[0]["status"], "completed")
         self.assertEqual(store.session(sid)["status"], "paused")
         self.assertIn("unknown interval", store.session(sid)["stop_reason"])
         self.assertEqual(study_report(store, study_id)["members"][0]["unknown_active_intervals"], 1)
