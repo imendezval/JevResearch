@@ -49,6 +49,23 @@ class Phase1Tests(unittest.TestCase):
     def runner(self, task=None):
         return Runner(self.store, task or SyntheticTask(), RandomController())
 
+    def test_controller_selection_mode_is_explicit(self):
+        class LocalWithPrepare(RandomController):
+            def prepare(self, *args):
+                raise AssertionError("local controller must use select")
+
+        local = Runner(self.store, SyntheticTask(), LocalWithPrepare())
+        sid = local.start(2, 5)
+        local.run(sid)
+        self.assertEqual([row["status"] for row in self.store.trials(sid)],
+                         ["completed", "completed"])
+
+        class Unsupported(RandomController):
+            selection_mode = "unsupported"
+
+        with self.assertRaisesRegex(ValueError, "unknown controller selection mode"):
+            Runner(self.store, SyntheticTask(), Unsupported())
+
     def test_spec_identity_and_seed_schedule(self):
         a = ExperimentSpec("t", "v1", {"b": 2, "a": 1}, "split", 10, 1, "source")
         b = replace(a, config={"a": 1, "b": 2})

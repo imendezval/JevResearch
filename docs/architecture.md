@@ -288,13 +288,15 @@ Later, classical optimizers can propose parameter values through this generation
 ## Controller
 
 ```python
-class RandomController:
+class LocalController:
+    selection_mode = "local"
     def select(self, state, candidates, rng_state):
         ...
 ```
 
-The external Jev controller prepares a bounded request from the saved offer, invokes the
-transport, then validates the returned candidate ID before the runner commits a trial.
+An audited controller declares `selection_mode = "audited"`, prepares a bounded request
+from the saved offer, invokes its transport, then validates the returned candidate ID
+before the runner commits a trial. The runner dispatches by this explicit mode.
 
 Examples:
 

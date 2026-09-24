@@ -45,6 +45,8 @@ def _result(task: Task, spec: ExperimentSpec, executor, trial_id: int) -> Experi
 class Runner:
     def __init__(self, store: Store, task: Task, controller: Controller,
                  executor=None, generator=None):
+        if controller.selection_mode not in ("local", "audited"):
+            raise ValueError("unknown controller selection mode")
         self.store, self.task, self.controller = store, task, controller
         self.executor = executor or InlineExecutor()
         self.generator = generator or CandidateGenerator()
@@ -132,7 +134,7 @@ class Runner:
         settings, source = self._compatible(sid)
         if max_new_trials is not None and max_new_trials < 0:
             raise ValueError("max_new_trials must be nonnegative")
-        audited = hasattr(self.controller, "prepare")
+        audited = self.controller.selection_mode == "audited"
         if audited:
             self.store.mark_unknown_started(sid)
         self.store.resume(sid)

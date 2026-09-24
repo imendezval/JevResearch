@@ -6,7 +6,7 @@ import math
 import re
 from dataclasses import dataclass
 from importlib import metadata
-from typing import Any
+from typing import Any, Literal
 
 from ..core import Candidate, SearchState, canonical
 
@@ -145,6 +145,7 @@ class TypeSafeSDKTransport:
 
 class JevController:
     kind = "jev"
+    selection_mode: Literal["audited"] = "audited"
 
     def __init__(self, transport, model: str = "jev-1.13.0", max_calls: int = 1):
         if not model or max_calls < 1:

@@ -7,3 +7,4 @@ Read `docs/architecture.md`, especially sections 4 and 7, before changing the se
 - Persist the selected pending trial before execution. The executor returns a structured result; storage records successes, failures, and interruptions, and the next `SearchState` is reconstructed from history.
 - Generic execution code must obtain a process task's payload and command from that task. Do not import a specific task or worker into generic execution or storage.
 - Keep the architecture document aligned with actual interfaces when those interfaces change. Preserve readable old campaign history and run the relevant regression tests before committing.
+- Keep the CLI in one module while it stays manageable. If future work makes its command and reporting logic materially hard to maintain, finish the requested task first, then ask the user whether to extract reporting into one module. Do not split it preemptively into per-command files.

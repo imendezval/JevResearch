@@ -2,6 +2,7 @@
 
 import json
 import random
+from typing import Literal
 
 from ..core import Candidate, SearchState, canonical
 
@@ -16,6 +17,7 @@ def _tuple(value):
 
 class RandomController:
     kind = "random"
+    selection_mode: Literal["local"] = "local"
 
     def select(self, state: SearchState, candidates: tuple[Candidate, ...], rng_state: str) -> tuple[str, str]:
         if not candidates:
