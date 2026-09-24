@@ -41,6 +41,16 @@ class Store:
           UNIQUE(session_id, number), UNIQUE(session_id, fingerprint),
           UNIQUE(session_id, config_key), UNIQUE(offer_id));
         """)
+        # Version 1 was the unversioned Phase 1 database. Preserve its rows.
+        version = self.db.execute("PRAGMA user_version").fetchone()[0]
+        if version > 2:
+            raise InvariantError(f"unsupported database version {version}")
+        if version < 2:
+            columns = {row[1] for row in self.db.execute("PRAGMA table_info(sessions)")}
+            with self.db:
+                if "schema_note" not in columns:
+                    self.db.execute("ALTER TABLE sessions ADD COLUMN schema_note TEXT")
+                self.db.execute("PRAGMA user_version=2")
 
     def close(self):
         self.db.close()

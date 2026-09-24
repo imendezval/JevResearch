@@ -2,46 +2,21 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import time
 from dataclasses import asdict
-from typing import Any
 
+from .candidate_generator import CandidateGenerator, make_spec, trial_seed
 from .controller import initial_rng
-from .core import Candidate, Controller, ExperimentResult, ExperimentSpec, SearchState, Task, canonical, digest, valid_objective
+from .core import Candidate, Controller, ExperimentResult, ExperimentSpec, SearchState, Task, canonical, valid_objective
+from .execution import InlineExecutor
 from .source import identity
 from .storage import InvariantError, Store
 
 
-def trial_seed(seed: int, number: int) -> int:
-    return int.from_bytes(hashlib.sha256(f"{seed}:{number}".encode()).digest()[:4], "big")
-
-
-def make_spec(task: Task, config: dict[str, Any], seed: int, source_digest: str,
-              parent: int | None) -> ExperimentSpec:
-    task.validate(config)
-    return ExperimentSpec(task.name, task.protocol, dict(config), task.data_split,
-                          task.eval_budget, seed, source_digest, parent)
-
-
 def generate(task: Task, state: SearchState, seed: int, source_digest: str) -> tuple[Candidate, ...]:
-    seen = {entry["config_key"] for entry in state.history}
-    candidates = []
-    for operator, parameters, config in task.proposals(state):
-        try:
-            spec = make_spec(task, config, trial_seed(seed, state.attempted), source_digest,
-                             state.best_trial_id)
-        except ValueError:
-            continue
-        if spec.config_key in seen:
-            continue
-        seen.add(spec.config_key)
-        cid = digest({"operator": operator, "parameters": parameters,
-                      "spec": asdict(spec)})[:16]
-        candidates.append(Candidate(cid, operator, parameters, state.best_trial_id,
-                                    dict(config), spec))
-    return tuple(candidates)
+    """Compatibility wrapper for Phase 1 callers."""
+    return CandidateGenerator().generate(task, state, seed, source_digest)
 
 
 def _candidate(raw: dict) -> Candidate:
@@ -49,10 +24,10 @@ def _candidate(raw: dict) -> Candidate:
                      raw["config"], ExperimentSpec(**raw["spec"]))
 
 
-def _result(task: Task, spec: ExperimentSpec) -> ExperimentResult:
+def _result(task: Task, spec: ExperimentSpec, executor, trial_id: int) -> ExperimentResult:
     start = time.monotonic()
     try:
-        result = task.evaluate(spec)
+        result = executor.execute(task, spec, trial_id)
     except Exception as exc:
         return ExperimentResult("failed", None, {}, time.monotonic() - start,
                                 type(exc).__name__, "task evaluation raised an exception")
@@ -69,8 +44,11 @@ def _result(task: Task, spec: ExperimentSpec) -> ExperimentResult:
 
 
 class Runner:
-    def __init__(self, store: Store, task: Task, controller: Controller):
+    def __init__(self, store: Store, task: Task, controller: Controller,
+                 executor=None, generator=None):
         self.store, self.task, self.controller = store, task, controller
+        self.executor = executor or InlineExecutor()
+        self.generator = generator or CandidateGenerator()
 
     def start(self, budget: int, seed: int) -> int:
         if budget < 1:
@@ -84,7 +62,9 @@ class Runner:
         settings = {"task": self.task.name, "protocol": self.task.protocol,
                     "data_split": self.task.data_split, "eval_budget": self.task.eval_budget,
                     "direction": self.task.objective_direction, "controller": self.controller.kind,
-                    "seed": seed, "budget": budget, "seed_schedule": "sha256(seed:index)"}
+                    "seed": seed, "budget": budget, "seed_schedule": "sha256(seed:index)",
+                    "executor": self.executor.kind,
+                    "task_details": getattr(self.task, "details", lambda: {})()}
         return self.store.create(settings, source, initial_rng(seed), baseline)
 
     def _compatible(self, sid: int):
@@ -93,7 +73,9 @@ class Runner:
         expected = (self.task.name, self.task.protocol, self.task.data_split,
                     self.task.eval_budget, self.task.objective_direction, self.controller.kind)
         actual = tuple(settings[k] for k in ("task", "protocol", "data_split", "eval_budget", "direction", "controller"))
-        if actual != expected or source["digest"] != identity(self.task)["digest"]:
+        if (actual != expected or source["digest"] != identity(self.task)["digest"]
+                or settings.get("executor", "inline") != self.executor.kind
+                or settings.get("task_details", {}) != getattr(self.task, "details", lambda: {})()):
             raise InvariantError("session task/protocol/controller or executable source changed; start a new session")
         return settings, source
 
@@ -118,7 +100,7 @@ class Runner:
                     return state
                 self.store.running(last["id"])
                 spec = ExperimentSpec(**json.loads(last["spec"]))
-                result = _result(self.task, spec)
+                result = _result(self.task, spec, self.executor, last["id"])
                 self.store.finish(last["id"], result)
                 new += 1
                 if last["number"] == 0 and result.status != "completed":
@@ -134,7 +116,7 @@ class Runner:
                 return state
             offer = self.store.outstanding(sid)
             if offer is None:
-                candidates = generate(self.task, state, settings["seed"], source["digest"])
+                candidates = self.generator.generate(self.task, state, settings["seed"], source["digest"])
                 if not candidates:
                     self.store.stop(sid, "no novel candidates")
                     return state
