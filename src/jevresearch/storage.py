@@ -45,11 +45,13 @@ class Store:
         version = self.db.execute("PRAGMA user_version").fetchone()[0]
         if version > 2:
             raise InvariantError(f"unsupported database version {version}")
-        if version < 2:
-            columns = {row[1] for row in self.db.execute("PRAGMA table_info(sessions)")}
-            with self.db:
-                if "schema_note" not in columns:
-                    self.db.execute("ALTER TABLE sessions ADD COLUMN schema_note TEXT")
+        columns = {row[1] for row in self.db.execute("PRAGMA table_info(trials)")}
+        with self.db:
+            for name, kind in (("exit_code", "INTEGER"), ("stdout_artifact", "TEXT"),
+                               ("stderr_artifact", "TEXT")):
+                if name not in columns:
+                    self.db.execute(f"ALTER TABLE trials ADD COLUMN {name} {kind}")
+            if version < 2:
                 self.db.execute("PRAGMA user_version=2")
 
     def close(self):
@@ -119,9 +121,15 @@ class Store:
                 raise InvariantError("trial is not pending")
 
     def finish(self, trial_id: int, result: ExperimentResult):
+        def artifact(suffix):
+            return next((p for p in result.artifacts if p.endswith(suffix)), None)
         with self.db:
-            cur = self.db.execute("UPDATE trials SET status=?,result=?,finished_at=? WHERE id=? AND status='running'",
-                                  (result.status, canonical(asdict(result)), time.time(), trial_id))
+            cur = self.db.execute("""UPDATE trials SET status=?,result=?,finished_at=?,
+                exit_code=?,stdout_artifact=?,stderr_artifact=?
+                WHERE id=? AND status='running'""",
+                (result.status, canonical(asdict(result)), time.time(),
+                 result.metrics.get("exit_code"), artifact("stdout.log"),
+                 artifact("stderr.log"), trial_id))
             if cur.rowcount != 1:
                 raise InvariantError("trial is not running")
 

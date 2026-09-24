@@ -31,7 +31,9 @@ def _result(task: Task, spec: ExperimentSpec, executor, trial_id: int) -> Experi
     except Exception as exc:
         return ExperimentResult("failed", None, {}, time.monotonic() - start,
                                 type(exc).__name__, "task evaluation raised an exception")
-    if (not isinstance(result, ExperimentResult) or not valid_objective(result)
+    if (not isinstance(result, ExperimentResult)
+            or (result.status == "completed" and not valid_objective(result))
+            or result.status not in ("completed", "failed", "interrupted")
             or spec.task != task.name or spec.protocol != task.protocol):
         return ExperimentResult("failed", None, {}, time.monotonic() - start,
                                 "InvalidResult", "missing, nonfinite, failed, or incompatible objective")
@@ -64,6 +66,7 @@ class Runner:
                     "direction": self.task.objective_direction, "controller": self.controller.kind,
                     "seed": seed, "budget": budget, "seed_schedule": "sha256(seed:index)",
                     "executor": self.executor.kind,
+                    "execution_details": getattr(self.executor, "details", lambda: {})(),
                     "task_details": getattr(self.task, "details", lambda: {})()}
         return self.store.create(settings, source, initial_rng(seed), baseline)
 
@@ -75,6 +78,7 @@ class Runner:
         actual = tuple(settings[k] for k in ("task", "protocol", "data_split", "eval_budget", "direction", "controller"))
         if (actual != expected or source["digest"] != identity(self.task)["digest"]
                 or settings.get("executor", "inline") != self.executor.kind
+                or settings.get("execution_details", {}) != getattr(self.executor, "details", lambda: {})()
                 or settings.get("task_details", {}) != getattr(self.task, "details", lambda: {})()):
             raise InvariantError("session task/protocol/controller or executable source changed; start a new session")
         return settings, source

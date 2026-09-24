@@ -1,14 +1,34 @@
 import json
+import importlib.util
 import tempfile
 import unittest
 from pathlib import Path
 
 from jevresearch.candidate_generator import CandidateGenerator
+from jevresearch.candidate_generator import make_spec
 from jevresearch.core import SearchState
 from jevresearch.tasks.vision.cifar10.task import CifarTask, fixture_labels, stratified_indices
 
 
 class CifarTaskTests(unittest.TestCase):
+    @unittest.skipUnless(importlib.util.find_spec("torch") and importlib.util.find_spec("torchvision"),
+                         "vision dependencies are optional")
+    def test_worker_uses_saved_train_and_validation_only(self):
+        from jevresearch.cifar_worker import _datasets, train
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task = CifarTask(root / "data", root / "run", fixture=True, batch_size=16)
+            train_set, val_set = _datasets(task.details(), task.split, 1)
+            self.assertEqual(set(train_set.indices) & set(val_set.indices), set())
+            self.assertEqual((len(train_set), len(val_set)), (80, 20))
+            spec = make_spec(task, task.baseline(), 123, "source", None)
+            result = train({"spec": vars(spec), "details": task.details(), "split": task.split})
+            self.assertEqual(result.status, "completed")
+            self.assertEqual((result.metrics["train_count"], result.metrics["validation_count"]), (80, 20))
+            self.assertEqual(result.objective, result.metrics["validation_accuracy"])
+            self.assertGreaterEqual(result.objective, 0)
+            self.assertLessEqual(result.objective, 1)
+
     def test_stratified_split_is_saved_and_disjoint(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
