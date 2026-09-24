@@ -52,3 +52,32 @@ PYTHONPATH=src python -m jevresearch compare --random-db runs/random-pair/histor
 ```
 
 `export` includes the saved, sanitized request, requested and response model IDs, SDK version, validated option probabilities and confidence, usage if supplied, call latency, failures, and best objective versus attempted trials and wall time. These Choice probabilities describe the provider's selection distribution; they are not calibrated probabilities of validation improvement. Lower-level SDK retry count and money are unavailable unless separately observed and priced. A failed call pauses the session with its saved offer; `resume` or `cifar-resume` may make another logged attempt. No random fallback occurs. Offline fake transports are test doubles and are labeled non-live in exports. The official test set stays untouched. A two-trial result only verifies integration; claims about relative search quality require multiple paired seeds with the full variability reported, and any question wording changes must be versioned and disclosed.
+
+Phase 4 adds a local study scheduler. Save a versioned JSON specification like this outside the repository's tracked source:
+
+```json
+{
+  "version": 1,
+  "task": "cifar10_fixture",
+  "protocol": "fixture-v1",
+  "data_dir": "/tmp/jev-fixture-data",
+  "output_root": "/tmp/jev-fixture-study",
+  "split_seed": 1729,
+  "epochs": 1,
+  "batch_size": 16,
+  "device": "cpu",
+  "trial_timeout_seconds": 120,
+  "active_time_budget_seconds": 120,
+  "trial_budget": 2,
+  "candidate_limit": 8,
+  "checkpoint_policy": "none",
+  "compute_hourly_usd": null,
+  "arms": [{"id": "random_a", "controller": "random"},
+           {"id": "random_b", "controller": "random"}],
+  "seeds": [7, 11]
+}
+```
+
+Run `PYTHONPATH=src python -m jevresearch study run --spec /tmp/fixture-study.json`, repeat that command to verify idempotence, or use `study resume` after a bounded `--max-new-trials 1` run. `PYTHONPATH=src python -m jevresearch study report --spec /tmp/fixture-study.json` writes `report.json` beside the study registry. `--data-dir` and `--output-root` override local paths and are recorded in the resolved manifest; changing them after a study starts requires a new output root. Use `task: "cifar10"`, `protocol: "official-train-v1"`, the official data cache, and a versioned Jev arm for a real paired study. A missing key, dataset, SDK, or device is reported as a blocked arm; the fixture is never substituted for official data.
+
+Study execution is single-host and Linux-specific. It holds an OS lock across scheduling, records worker process identity, and gives child workers a parent-death signal. A resumed study verifies saved worker results before accepting them; interrupted trials still count once. The active-time cap applies between trials and never cuts a training run short. Calendar elapsed includes pauses; observed active time does not. Unknown crash intervals are reported separately and can conservatively block more work. `checkpoint_policy: "best"` retains only the current best completed model and its provenance manifest, with intentional pruning recorded in SQLite. The compute hourly rate, if supplied, produces an occupancy **estimate**; GPU-active time, lower-level SDK retries, and Jev monetary cost remain unavailable without separate validated measurements or an archived pricing snapshot.

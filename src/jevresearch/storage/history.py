@@ -60,6 +60,7 @@ class Store:
           blocked_reason TEXT, PRIMARY KEY(study_id,arm_id,seed));
         CREATE TABLE IF NOT EXISTS study_activity (
           id INTEGER PRIMARY KEY, study_id INTEGER NOT NULL REFERENCES studies(id),
+          session_id INTEGER REFERENCES sessions(id), trial_number INTEGER,
           started_at REAL NOT NULL, finished_at REAL, status TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS workers (
           trial_id INTEGER PRIMARY KEY REFERENCES trials(id), pid INTEGER NOT NULL,
@@ -71,16 +72,20 @@ class Store:
         """)
         # Version 1 was the unversioned Phase 1 database. Preserve its rows.
         version = self.db.execute("PRAGMA user_version").fetchone()[0]
-        if version > 4:
+        if version > 5:
             raise InvariantError(f"unsupported database version {version}")
         columns = {row[1] for row in self.db.execute("PRAGMA table_info(trials)")}
+        activity_columns = {row[1] for row in self.db.execute("PRAGMA table_info(study_activity)")}
         with self.db:
             for name, kind in (("exit_code", "INTEGER"), ("stdout_artifact", "TEXT"),
                                ("stderr_artifact", "TEXT")):
                 if name not in columns:
                     self.db.execute(f"ALTER TABLE trials ADD COLUMN {name} {kind}")
-            if version < 4:
-                self.db.execute("PRAGMA user_version=4")
+            for name in ("session_id", "trial_number"):
+                if name not in activity_columns:
+                    self.db.execute(f"ALTER TABLE study_activity ADD COLUMN {name} INTEGER")
+            if version < 5:
+                self.db.execute("PRAGMA user_version=5")
 
     def close(self):
         self.db.close()
@@ -144,16 +149,17 @@ class Store:
             self.db.execute("""UPDATE study_members SET blocked_reason=NULL
                 WHERE study_id=? AND arm_id=? AND seed=?""", (study_id, arm_id, seed))
 
-    def start_activity(self, study_id: int) -> int:
+    def start_activity(self, study_id: int, session_id: int) -> int:
         with self.db:
-            cur = self.db.execute("""INSERT INTO study_activity(study_id,started_at,status)
-                VALUES(?,?,'running')""", (study_id, time.time()))
+            cur = self.db.execute("""INSERT INTO study_activity(study_id,session_id,started_at,status)
+                VALUES(?,?,?,'running')""", (study_id, session_id, time.time()))
             return cur.lastrowid
 
-    def finish_activity(self, activity_id: int):
+    def finish_activity(self, activity_id: int, trial_number: int | None = None):
         with self.db:
-            self.db.execute("""UPDATE study_activity SET finished_at=?,status='completed'
-                WHERE id=? AND status='running'""", (time.time(), activity_id))
+            self.db.execute("""UPDATE study_activity
+                SET finished_at=?,status='completed',trial_number=?
+                WHERE id=? AND status='running'""", (time.time(), trial_number, activity_id))
 
     def activity(self, study_id: int):
         return self.db.execute("SELECT * FROM study_activity WHERE study_id=? ORDER BY id",

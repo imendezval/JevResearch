@@ -11,11 +11,11 @@ from pathlib import Path
 from .experiment import digest
 
 _ID = re.compile(r"^[a-zA-Z][a-zA-Z0-9_-]{0,31}$")
-_FIELDS = {"version", "task", "data_dir", "output_root", "split_seed", "epochs",
+_FIELDS = {"version", "task", "protocol", "data_dir", "output_root", "split_seed", "epochs",
            "batch_size", "device", "trial_timeout_seconds", "active_time_budget_seconds",
            "trial_budget", "candidate_limit", "checkpoint_policy", "compute_hourly_usd",
            "arms", "seeds"}
-_REQUIRED = {"version", "task", "data_dir", "output_root", "arms", "seeds",
+_REQUIRED = {"version", "task", "protocol", "data_dir", "output_root", "arms", "seeds",
              "trial_budget", "active_time_budget_seconds"}
 _DEFAULTS = {"split_seed": 1729, "epochs": 1, "batch_size": 256, "device": "cpu",
              "trial_timeout_seconds": 900.0, "candidate_limit": 8,
@@ -36,6 +36,7 @@ class StudyArm:
 class StudySpec:
     version: int
     task: str
+    protocol: str
     data_dir: str
     output_root: str
     split_seed: int
@@ -69,6 +70,9 @@ class StudySpec:
             raise ValueError("study version must be 1")
         if values["task"] not in ("cifar10", "cifar10_fixture"):
             raise ValueError("unsupported study task")
+        expected_protocol = "fixture-v1" if values["task"] == "cifar10_fixture" else "official-train-v1"
+        if values["protocol"] != expected_protocol:
+            raise ValueError("study protocol does not match task")
         if values["device"] not in ("cpu", "cuda") or values["checkpoint_policy"] not in ("none", "best"):
             raise ValueError("invalid device or checkpoint policy")
         for key, maximum in (("split_seed", None), ("epochs", None), ("batch_size", None),
@@ -100,13 +104,14 @@ class StudySpec:
             if item.controller == "random" and set(arm) != {"id", "controller"}:
                 raise ValueError("random arm cannot have Jev settings")
             if item.controller == "jev":
-                item = StudyArm(item.id, item.controller, item.model or "jev-1.13.0",
+                item = StudyArm(item.id, item.controller, "jev-1.13.0" if item.model is None else item.model,
                                 10.0 if item.api_timeout is None else item.api_timeout,
                                 1 if item.sdk_retries is None else item.sdk_retries,
                                 1 if item.max_api_calls is None else item.max_api_calls)
                 if (type(item.model) is not str or not item.model.startswith("jev-")
                         or type(item.api_timeout) not in (int, float) or not math.isfinite(item.api_timeout)
-                        or item.api_timeout <= 0 or item.sdk_retries not in (0, 1)
+                        or item.api_timeout <= 0 or type(item.sdk_retries) is not int
+                        or item.sdk_retries not in (0, 1)
                         or type(item.max_api_calls) is not int or item.max_api_calls < 1):
                     raise ValueError("invalid Jev arm settings")
             parsed.append(item)

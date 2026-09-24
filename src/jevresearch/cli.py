@@ -8,6 +8,8 @@ from pathlib import Path
 from .controllers.jev import JevController, TypeSafeSDKTransport
 from .controllers.random import RandomController
 from .core.runner import Runner
+from .core.study_runner import StudyRunner
+from .core.study_report import study_report
 from .execution.subprocess import SubprocessExecutor
 from .storage.history import Store
 from .tasks.synthetic import SyntheticTask
@@ -220,7 +222,38 @@ def main(argv=None):
     comparison.add_argument("--jev-db", required=True)
     comparison.add_argument("--jev-session", type=int, required=True)
     comparison.add_argument("--output")
+    study = sub.add_parser("study")
+    study_commands = study.add_subparsers(dest="study_command", required=True)
+    for name in ("run", "resume", "report"):
+        command = study_commands.add_parser(name)
+        command.add_argument("--spec", required=True)
+        command.add_argument("--data-dir")
+        command.add_argument("--output-root")
+        if name != "report":
+            command.add_argument("--max-new-trials", type=int)
+        else:
+            command.add_argument("--output")
     args = parser.parse_args(argv)
+    if args.command == "study":
+        scheduled = StudyRunner(args.spec, data_dir=args.data_dir,
+                                output_root=args.output_root)
+        if args.study_command == "report":
+            study_store = Store(scheduled.root / "study.sqlite")
+            try:
+                row = study_store.study()
+                if row is None:
+                    raise RuntimeError("study has not been started")
+                output = json.dumps(study_report(study_store, row["id"]), indent=2)
+            finally:
+                study_store.close()
+            path = Path(args.output) if args.output else scheduled.root / "report.json"
+            path.write_text(output + "\n")
+            print(path)
+        else:
+            study_id = scheduled.run(args.max_new_trials)
+            print(json.dumps({"study_id": study_id,
+                              "registry": str(scheduled.root / "study.sqlite")}, indent=2))
+        return
     if args.command == "compare":
         random_store = Store(args.random_db)
         jev_store = Store(args.jev_db)

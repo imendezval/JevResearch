@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import math
 import os
 import signal
 import subprocess
@@ -11,7 +12,7 @@ import time
 from dataclasses import asdict
 from pathlib import Path
 
-from ..core import ExperimentResult, canonical
+from ..core import ExperimentResult, canonical, valid_objective
 from ..tasks.base import ProcessTask
 from .ownership import parent_death_guard, process_identity, same_worker_alive
 
@@ -126,6 +127,12 @@ class SubprocessExecutor:
                     or manifest["trial_id"] != trial_id):
                 return None
             parsed = ExperimentResult(**json.loads(raw_result))
+            if (parsed.status not in ("completed", "failed", "interrupted")
+                    or (parsed.status == "completed" and not valid_objective(parsed))
+                    or type(manifest.get("worker_wall_seconds")) not in (int, float)
+                    or not math.isfinite(manifest["worker_wall_seconds"])
+                    or manifest["worker_wall_seconds"] < 0):
+                return None
             if self.checkpoint_policy == "best" and parsed.status == "completed":
                 checkpoint = folder / "model.pt"
                 checkpoint_manifest = folder / "checkpoint-manifest.json"

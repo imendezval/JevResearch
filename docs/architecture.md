@@ -208,7 +208,10 @@ src/jevresearch/
 │   ├── candidate_generator.py
 │   ├── result.py
 │   ├── objective.py
-│   └── runner.py
+│   ├── runner.py
+│   ├── study.py
+│   ├── study_runner.py
+│   └── study_report.py
 │
 ├── controllers/
 │   ├── base.py
@@ -229,7 +232,8 @@ src/jevresearch/
 ├── execution/
 │   ├── base.py
 │   ├── local.py
-│   └── subprocess.py
+│   ├── subprocess.py
+│   └── ownership.py
 │
 ├── storage/
 │   └── history.py
@@ -467,7 +471,7 @@ while session has work:
 
 The core runner should not contain task-specific logic.
 
-The task owns its fixed per-trial training budget; the current campaign budget counts attempted trials, including failures. The worker records training duration and the executor records trial wall duration. A wall-clock campaign limit and separate controller-time accounting remain goals for later infrastructure work.
+The task owns its fixed per-trial training budget; the campaign budget counts attempted trials, including failures. The worker records training duration and the executor records trial wall duration. A Phase 4 study schedules campaigns sequentially under a local OS lock and a total observed active-time cap. Its intervals include controller, worker, and orchestration time once; calendar elapsed remains separate. A study worker has a parent-death guard, recorded process identity, and an atomic result manifest. Resume accepts a completed result only after identity and artifact checks, and never retries an interrupted trial.
 
 ---
 

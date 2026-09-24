@@ -12,7 +12,8 @@ class StudySpecTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.path = Path(self.tmp.name) / "study.json"
-        self.raw = {"version": 1, "task": "cifar10_fixture", "data_dir": self.tmp.name,
+        self.raw = {"version": 1, "task": "cifar10_fixture", "protocol": "fixture-v1",
+                    "data_dir": self.tmp.name,
                     "output_root": str(Path(self.tmp.name) / "output"),
                     "trial_budget": 2, "active_time_budget_seconds": 30,
                     "arms": [{"id": "random_a", "controller": "random"},
@@ -34,7 +35,7 @@ class StudySpecTests(unittest.TestCase):
         for change in ({"extra": 1}, {"version": 2}, {"seeds": [7, 7]},
                        {"arms": [{"id": "same", "controller": "random"},
                                   {"id": "same", "controller": "random"}]},
-                       {"device": "invalid"}, {"trial_budget": 0},
+                       {"device": "invalid"}, {"protocol": "wrong"}, {"trial_budget": 0},
                        {"arms": [{"id": "r", "controller": "random", "model": "x"}]}):
             with self.subTest(change=change):
                 with self.assertRaises(ValueError):
@@ -49,6 +50,6 @@ class StudySpecTests(unittest.TestCase):
                 spec.normalized(), spec.fingerprint("source"), "source", overrides))
             with self.assertRaises(InvariantError):
                 store.register_study(spec.normalized(), spec.fingerprint("different"), "different", overrides)
-            self.assertEqual(store.db.execute("PRAGMA user_version").fetchone()[0], 4)
+            self.assertEqual(store.db.execute("PRAGMA user_version").fetchone()[0], 5)
         finally:
             store.close()

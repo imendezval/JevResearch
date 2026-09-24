@@ -153,14 +153,50 @@ def train(payload, checkpoint_path=None):
                             time.monotonic() - training_start, artifacts=artifacts)
 
 
+def validate_checkpoint(payload, checkpoint_path):
+    """Repeat the saved model's validation metric on the recorded split."""
+    import torch
+    from torch.utils.data import DataLoader
+
+    spec = ExperimentSpec(**payload["spec"])
+    saved_split = json.loads(Path(payload["details"]["split_file"]).read_text())
+    if (saved_split != payload["split"] or spec.data_split != saved_split["split_sha256"]
+            or dataset_identity(Path(payload["details"]["data_dir"]),
+                                payload["details"]["dataset"] == "cifar10_fixture")
+            != saved_split["dataset_sha256"]):
+        raise ValueError("checkpoint dataset or split changed")
+    checkpoint_path = Path(checkpoint_path)
+    metadata = json.loads(checkpoint_path.with_name("checkpoint-manifest.json").read_text())
+    if (metadata["spec_fingerprint"] != spec.fingerprint
+            or metadata["sha256"] != hashlib.sha256(checkpoint_path.read_bytes()).hexdigest()
+            or metadata["protocol"] != spec.protocol or metadata["split"] != spec.data_split
+            or metadata["model_version"] != spec.config["model"]):
+        raise ValueError("checkpoint provenance or integrity mismatch")
+    model = make_model().to(spec.config["device"])
+    model.load_state_dict(torch.load(checkpoint_path, map_location=spec.config["device"],
+                                     weights_only=True))
+    model.eval()
+    _, validation = _datasets(payload["details"], payload["split"], spec.seed)
+    loader = DataLoader(validation, batch_size=spec.config["batch_size"], shuffle=False,
+                        num_workers=0)
+    correct = total = 0
+    with torch.no_grad():
+        for images, labels in loader:
+            logits = model(images.to(spec.config["device"]))
+            correct += (logits.argmax(1).cpu() == labels).sum().item()
+            total += labels.numel()
+    return correct / total
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", required=True)
     parser.add_argument("--output", required=True)
     args = parser.parse_args(argv)
     start = time.monotonic()
-    payload = json.loads(Path(args.input).read_text())
+    payload = None
     try:
+        payload = json.loads(Path(args.input).read_text())
         checkpoint = Path(args.output).with_name("model.pt") if payload.get("checkpoint_policy") == "best" else None
         result = train(payload, checkpoint)
     except Exception as exc:
@@ -171,7 +207,7 @@ def main(argv=None):
     temporary = output.with_suffix(".tmp")
     temporary.write_text(canonical(asdict(result)) + "\n")
     temporary.replace(output)
-    if "trial_id" in payload:
+    if isinstance(payload, dict) and "trial_id" in payload:
         manifest = {"trial_id": payload["trial_id"],
                     "spec_fingerprint": payload["spec_fingerprint"],
                     "input_sha256": hashlib.sha256(Path(args.input).read_bytes()).hexdigest(),
