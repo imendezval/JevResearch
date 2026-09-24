@@ -16,11 +16,6 @@ from ..tasks.base import Task
 from . import Candidate, ExperimentResult, ExperimentSpec, SearchState, canonical, valid_objective
 
 
-def generate(task: Task, state: SearchState, seed: int, source_digest: str) -> tuple[Candidate, ...]:
-    """Compatibility wrapper for Phase 1 callers."""
-    return CandidateGenerator().generate(task, state, seed, source_digest)
-
-
 def _candidate(raw: dict) -> Candidate:
     return Candidate(raw["id"], raw["operator"], raw["parameters"], raw["parent_id"],
                      raw["config"], ExperimentSpec(**raw["spec"]))

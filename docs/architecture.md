@@ -237,7 +237,7 @@ src/jevresearch/
 └── source.py
 ```
 
-Thin modules at the package root preserve Phase 1 import paths. New controllers, operators, tasks, executors, storage adapters, agents, and analysis modules belong in these packages when implemented; do not add empty future modules.
+New controllers, operators, tasks, executors, storage adapters, agents, and analysis modules belong in these packages when implemented; do not add empty future modules.
 
 ---
 
@@ -275,7 +275,7 @@ The controller should not need to know whether the task is CV, tabular, language
 
 ```python
 class CandidateGenerator:
-    def generate(self, task, state):
+    def generate(self, task, state, seed, source_digest):
         ...
 ```
 
@@ -288,10 +288,13 @@ Later, classical optimizers can propose parameter values through this generation
 ## Controller
 
 ```python
-class Controller:
-    def select(self, state, candidates):
+class RandomController:
+    def select(self, state, candidates, rng_state):
         ...
 ```
+
+The external Jev controller prepares a bounded request from the saved offer, invokes the
+transport, then validates the returned candidate ID before the runner commits a trial.
 
 Examples:
 

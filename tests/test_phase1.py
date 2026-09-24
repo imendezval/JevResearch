@@ -6,12 +6,13 @@ from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
-from jevresearch.controller import RandomController
+from jevresearch.controllers.random import RandomController
 from jevresearch.core import ExperimentResult, ExperimentSpec, better
-from jevresearch.runner import Runner, generate, trial_seed
+from jevresearch.core.candidate_generator import trial_seed
+from jevresearch.core.runner import Runner
 from jevresearch.source import identity
 from jevresearch.storage import InvariantError, Store
-from jevresearch.synthetic import SyntheticTask
+from jevresearch.tasks.synthetic import SyntheticTask
 
 
 class TinyTask:
@@ -69,7 +70,7 @@ class Phase1Tests(unittest.TestCase):
         sid = runner.start(5, 3)
         runner.run(sid, 1)
         state = self.store.state(sid)
-        offered = generate(runner.task, state, 3, identity(runner.task)["digest"])
+        offered = runner.generator.generate(runner.task, state, 3, identity(runner.task)["digest"])
         self.assertEqual(len(offered), 1)
         self.assertEqual(offered[0].spec.config, {"n": 1})
         self.assertEqual(offered[0].config, offered[0].spec.config)
@@ -122,7 +123,7 @@ class Phase1Tests(unittest.TestCase):
         sid = runner.start(4, 5)
         runner.run(sid, 1)
         state = self.store.state(sid)
-        offer = generate(runner.task, state, 5, identity()["digest"])
+        offer = runner.generator.generate(runner.task, state, 5, identity()["digest"])
         oid = self.store.save_offer(sid, state, offer, self.store.session(sid)["rng_state"])
         saved = self.store.outstanding(sid)
         self.assertEqual(saved["id"], oid)
@@ -134,7 +135,7 @@ class Phase1Tests(unittest.TestCase):
         sid2 = runner.start(3, 6)
         runner.run(sid2, 1)
         state2 = self.store.state(sid2)
-        offer2 = generate(runner.task, state2, 6, identity()["digest"])
+        offer2 = runner.generator.generate(runner.task, state2, 6, identity()["digest"])
         oid2 = self.store.save_offer(sid2, state2, offer2, self.store.session(sid2)["rng_state"])
         self.store.select(sid2, oid2, offer2[0], self.store.session(sid2)["rng_state"])
         runner.run(sid2, 1)
@@ -180,7 +181,7 @@ class Phase1Tests(unittest.TestCase):
             self.runner(TinyTask()).run(sid)
         runner.run(sid, 1)
         state = self.store.state(sid)
-        offer = generate(runner.task, state, 1, identity()["digest"])
+        offer = runner.generator.generate(runner.task, state, 1, identity()["digest"])
         oid = self.store.save_offer(sid, state, offer, self.store.session(sid)["rng_state"])
         self.store.select(sid, oid, offer[0], self.store.session(sid)["rng_state"])
         with self.assertRaises(InvariantError):
@@ -192,7 +193,7 @@ class Phase1Tests(unittest.TestCase):
         sid = runner.start(3, 2)
         runner.run(sid, 1)
         state = self.store.state(sid)
-        offered = generate(runner.task, state, 2, identity()["digest"])
+        offered = runner.generator.generate(runner.task, state, 2, identity()["digest"])
         oid = self.store.save_offer(sid, state, offered, self.store.session(sid)["rng_state"])
         baseline = ExperimentSpec(**json.loads(self.store.trials(sid)[0]["spec"]))
         repeated = replace(offered[0], spec=replace(baseline, seed=baseline.seed + 1))
@@ -214,7 +215,7 @@ class Phase1Tests(unittest.TestCase):
         sid = runner.start(4, 11)
         runner.run(sid, 1)
         state = self.store.state(sid)
-        candidates = generate(runner.task, state, 11, identity()["digest"])
+        candidates = runner.generator.generate(runner.task, state, 11, identity()["digest"])
         oid = self.store.save_offer(sid, state, candidates, self.store.session(sid)["rng_state"])
         selected, next_rng = runner.controller.select(state, candidates, self.store.session(sid)["rng_state"])
         self.store.select(sid, oid, next(c for c in candidates if c.id == selected), next_rng)
