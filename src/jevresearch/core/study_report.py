@@ -76,7 +76,12 @@ def study_report(store, study_id: int):
                          ((row["trial_number"] is not None and row["trial_number"] <= trial["number"])
                           or (row["trial_number"] is None and row["finished_at"] <= endpoint)))
             trajectory.append({"attempted_trials": trial["number"] + 1,
-                               "status": trial["status"], "best_objective": best,
+                               "trial_id": trial["number"],
+                               "candidate_id": trial["candidate_id"],
+                               "status": trial["status"],
+                               "objective": result["objective"] if result else None,
+                               "error_type": result["error_type"] if result else None,
+                               "best_objective": best,
                                "calendar_elapsed_seconds": endpoint - session["created_at"],
                                "observed_active_seconds": active})
         decisions = store.decision_attempts(sid)
@@ -86,6 +91,11 @@ def study_report(store, study_id: int):
         usage = [u for u in usage if u]
         rate = spec["compute_hourly_usd"]
         item.update({"status": session["status"], "stop_reason": session["stop_reason"],
+                     "protocol_identity": {"task": settings["task"],
+                                           "protocol": settings["protocol"],
+                                           "dataset_sha256": settings["task_details"].get("dataset_sha256"),
+                                           "split_sha256": settings["task_details"].get("split_sha256"),
+                                           "source_digest": source["digest"]},
                      "trajectory": trajectory, "observed_active_seconds": observed,
                      "unknown_active_intervals": unknown,
                      "unknown_active_upper_bound_seconds": unknown_upper,

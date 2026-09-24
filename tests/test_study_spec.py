@@ -36,7 +36,9 @@ class StudySpecTests(unittest.TestCase):
                        {"arms": [{"id": "same", "controller": "random"},
                                   {"id": "same", "controller": "random"}]},
                        {"device": "invalid"}, {"protocol": "wrong"}, {"trial_budget": 0},
-                       {"arms": [{"id": "r", "controller": "random", "model": "x"}]}):
+                       {"arms": [{"id": "r", "controller": "random", "model": "x"}]},
+                       {"arms": [{"id": 3, "controller": "random"}]},
+                       {"arms": [{"id": "j", "controller": "jev", "model": "jev-latest"}]}):
             with self.subTest(change=change):
                 with self.assertRaises(ValueError):
                     self.load({**self.raw, **change})

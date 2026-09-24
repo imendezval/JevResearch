@@ -99,7 +99,9 @@ class StudySpec:
             if type(arm) is not dict or set(arm) - set(StudyArm.__dataclass_fields__) or not {"id", "controller"} <= set(arm):
                 raise ValueError("invalid arm fields")
             item = StudyArm(**arm)
-            if not _ID.fullmatch(item.id) or item.controller not in ("random", "jev"):
+            if (type(item.id) is not str or not _ID.fullmatch(item.id)
+                    or type(item.controller) is not str
+                    or item.controller not in ("random", "jev")):
                 raise ValueError("invalid arm id or controller")
             if item.controller == "random" and set(arm) != {"id", "controller"}:
                 raise ValueError("random arm cannot have Jev settings")
@@ -108,7 +110,8 @@ class StudySpec:
                                 10.0 if item.api_timeout is None else item.api_timeout,
                                 1 if item.sdk_retries is None else item.sdk_retries,
                                 1 if item.max_api_calls is None else item.max_api_calls)
-                if (type(item.model) is not str or not item.model.startswith("jev-")
+                if (type(item.model) is not str
+                        or not re.fullmatch(r"jev-\d+\.\d+\.\d+", item.model)
                         or type(item.api_timeout) not in (int, float) or not math.isfinite(item.api_timeout)
                         or item.api_timeout <= 0 or type(item.sdk_retries) is not int
                         or item.sdk_retries not in (0, 1)
