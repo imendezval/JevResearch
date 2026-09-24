@@ -46,6 +46,9 @@ def _safe(value: Any, stats: dict[str, int], key: str = "") -> Any:
             return value[:160] + "[truncated]"
         return value
     if isinstance(value, dict):
+        if any(str(k).startswith(("/", "~", "\\\\")) or _WINDOWS_PATH.match(str(k))
+               for k in value):
+            raise ValueError("absolute path in candidate config key")
         return {str(k): _safe(v, stats, str(k)) for k, v in sorted(value.items())}
     if isinstance(value, (list, tuple)):
         return [_safe(v, stats) for v in value]
@@ -77,11 +80,13 @@ def _description(candidate: Candidate, incumbent: dict | None, stats: dict[str, 
         previous = old.get(key)
         if previous != new:
             change = {"from": _safe(previous, stats, key), "to": config[key]}
-            if (isinstance(previous, (int, float)) and not isinstance(previous, bool)
+            if (not _PRIVATE_KEY.search(key)
+                    and isinstance(previous, (int, float)) and not isinstance(previous, bool)
                     and isinstance(new, (int, float)) and not isinstance(new, bool)):
                 change["delta"] = round(new - previous, 10)
             changes[key] = change
-    return f"operator={candidate.operator}; changes={canonical(changes)}; full_config={canonical(config)}"
+    operator = _safe(candidate.operator, stats)
+    return f"operator={operator}; changes={canonical(changes)}; full_config={canonical(config)}"
 
 
 @dataclass(frozen=True)
@@ -164,7 +169,8 @@ class JevController:
         stats = {"redacted_fields": 0, "truncated_fields": 0}
         first = candidates[0]
         criteria = {c.id: _description(c, state.incumbent_config, stats) for c in candidates}
-        body = {"state": {"task": first.spec.task, "protocol": first.spec.protocol,
+        body = {"state": {"task": _safe(first.spec.task, stats),
+                          "protocol": _safe(first.spec.protocol, stats),
                           "objective_direction": direction,
                           "remaining_trial_slots": state.budget - state.attempted,
                           "best_completed": {"trial_id": state.best_trial_id,
@@ -210,14 +216,17 @@ class JevController:
             if probabilities[choice] < max(probabilities.values()) - 0.02:
                 raise ValueError("selected choice conflicts with distribution")
             if usage is not None:
-                if type(usage) is not dict or any(type(usage.get(k)) is not int or usage[k] < 0
-                                                   for k in ("input_tokens", "output_tokens")):
+                if type(usage) is not dict or any(
+                    usage.get(k) is not None and (type(usage[k]) is not int or usage[k] < 0)
+                    for k in ("input_tokens", "output_tokens")
+                ):
                     raise ValueError("malformed usage")
             response = {"model": model,
                         "answers": {"next_trial": {"type": "choice", "choice": choice,
                                                    "probabilities": probabilities,
                                                    "confidence": confidence}},
-                        "usage": {k: usage[k] for k in ("input_tokens", "output_tokens")}
+                        "usage": {k: usage[k] for k in ("input_tokens", "output_tokens")
+                                  if usage.get(k) is not None}
                         if usage is not None else None}
             return ValidatedChoice(choice, response)
         except (KeyError, TypeError, ValueError) as exc:

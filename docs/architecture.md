@@ -212,7 +212,8 @@ src/jevresearch/
 │
 ├── controllers/
 │   ├── base.py
-│   └── random.py
+│   ├── random.py
+│   └── jev.py
 │
 ├── operators/
 │   ├── base.py
@@ -445,7 +446,12 @@ while session has work:
     if there is no pending trial:
         candidates = generator.generate(task, state)
         persist candidate pool and controller input
-        decision = controller.select(state, candidates)
+        if controller calls an external service:
+            persist each sanitized logical decision attempt before the call
+            persist response or error; keep failed offers available for resume
+            decision = validated choice from the saved offer
+        else:
+            decision = controller.select(state, candidates)
         spec = selected candidate's immutable ExperimentSpec
         persist decision and selected pending trial atomically
     mark trial running

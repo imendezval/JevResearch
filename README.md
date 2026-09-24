@@ -36,3 +36,19 @@ PYTHONPATH=src python -m jevresearch cifar-run --data-dir /tmp/jev-fixture-data 
 ```
 
 Resume with `PYTHONPATH=src python -m jevresearch cifar-resume --db runs/cifar-example/history.sqlite --session 1`. `show` gives a compact status view; `export` emits all trial specs, operators, results, failures, timing, device information, parent links, source identity, and best-so-far values as JSON. Old Phase 1 databases migrate in place and remain readable. Source changes prevent resuming a campaign with a different executable. CUDA determinism is requested, but exact reproducibility across devices and PyTorch versions is not guaranteed. GPU-active time is reported as unavailable unless measured; wall time is never presented as GPU-active time.
+
+Phase 3 adds a Jev controller that selects one ID from the same bounded candidate generator as random. Install the optional SDK with `pip install '.[jev]'` and set `TYPESAFE_API_KEY` in your environment. The integration uses the versioned `jev-1.13.0` model by default, one typed `Choice`, an explicit 10-second request timeout, at most one SDK retry, and at most one logical Jev call per command by default. A live synthetic wiring run is:
+
+```bash
+PYTHONPATH=src python -m jevresearch run --db runs/jev-synthetic.sqlite --budget 2 --seed 7 --controller jev --model jev-1.13.0 --api-timeout 10 --sdk-retries 1 --max-api-calls 1
+```
+
+For a paired CIFAR-10 wiring comparison, use separate run directories and the **same** official data cache, split seed, search seed, budget, epoch count, batch size, device, fixed model, and source revision. Change only `--controller` and Jev API settings:
+
+```bash
+PYTHONPATH=src python -m jevresearch cifar-run --data-dir /path/to/cache --run-dir runs/random-pair --device cpu --epochs 1 --batch-size 256 --budget 2 --seed 7 --split-seed 1729 --timeout 900 --controller random
+PYTHONPATH=src python -m jevresearch cifar-run --data-dir /path/to/cache --run-dir runs/jev-pair --device cpu --epochs 1 --batch-size 256 --budget 2 --seed 7 --split-seed 1729 --timeout 900 --controller jev --model jev-1.13.0 --api-timeout 10 --sdk-retries 1 --max-api-calls 1
+PYTHONPATH=src python -m jevresearch compare --random-db runs/random-pair/history.sqlite --random-session 1 --jev-db runs/jev-pair/history.sqlite --jev-session 1 --output runs/pair-comparison.json
+```
+
+`export` includes the saved, sanitized request, requested and response model IDs, SDK version, validated option probabilities and confidence, usage if supplied, call latency, failures, and best objective versus attempted trials and wall time. These Choice probabilities describe the provider's selection distribution; they are not calibrated probabilities of validation improvement. Lower-level SDK retry count and money are unavailable unless separately observed and priced. A failed call pauses the session with its saved offer; `resume` or `cifar-resume` may make another logged attempt. No random fallback occurs. Offline fake transports are test doubles and are labeled non-live in exports. The official test set stays untouched. A two-trial result only verifies integration; claims about relative search quality require multiple paired seeds with the full variability reported, and any question wording changes must be versioned and disclosed.

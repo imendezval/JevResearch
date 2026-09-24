@@ -66,16 +66,24 @@ class JevAdapterTests(unittest.TestCase):
     def test_sensitive_fields_and_paths_are_not_sent(self):
         state, candidates = offer()
         original = candidates[0]
-        config = {"api_key": "secret-value", "dataset_path": "/private/data",
+        config = {"api_key": "secret-value", "secret_count": 123456,
+                  "dataset_path": "/private/data",
                   "message": "x" * 300}
+        state = replace(state, incumbent_config={"secret_count": 1})
         candidate = replace(original, config=config, spec=replace(original.spec, config=config))
         prepared = JevController(FakeTransport()).prepare(state, (candidate,), "max")
         wire = canonical(prepared["body"])
         self.assertNotIn("secret-value", wire)
         self.assertNotIn("/private/data", wire)
         self.assertNotIn("x" * 300, wire)
+        self.assertNotIn("123455", wire)
         self.assertIn("[redacted]", wire)
         self.assertGreater(prepared["truncation"]["redacted_fields"], 0)
+        bad_config = {"/private/key": "value"}
+        bad_candidate = replace(original, config=bad_config,
+                                spec=replace(original.spec, config=bad_config))
+        with self.assertRaisesRegex(ValueError, "absolute path"):
+            JevController(FakeTransport()).prepare(state, (bad_candidate,), "max")
 
     def test_validate_choice_model_usage_and_distribution(self):
         state, candidates = offer()
@@ -85,6 +93,10 @@ class JevAdapterTests(unittest.TestCase):
         validated = controller.validate(prepared, good)
         self.assertEqual(validated.selected_id, candidates[0].id)
         self.assertEqual(validated.response["usage"]["input_tokens"], 42)
+        partial = answer(prepared)
+        partial["usage"] = {"input_tokens": 42}
+        self.assertEqual(controller.validate(prepared, partial).response["usage"],
+                         {"input_tokens": 42})
         for change in (
             lambda r: r["answers"]["next_trial"].update(choice="unoffered"),
             lambda r: r["answers"]["next_trial"]["probabilities"].update({candidates[0].id: 0.6}),
