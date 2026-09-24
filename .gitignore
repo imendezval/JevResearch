@@ -15,3 +15,6 @@ artifacts/
 logs/
 datasets/
 checkpoints/
+.codex/
+data/
+runs/

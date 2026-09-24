@@ -1,0 +1,42 @@
+# JevResearch — Phase 2: CIFAR-10 task and random-search baseline
+
+## Mission and prerequisites
+
+Start only after the Phase 1 acceptance gate passes. Make the existing generic loop run real CIFAR-10 experiments: baseline, bounded candidates, random selection, independent training, validation result, and durable history. Make only the core/interface changes real training proves necessary, with an explicit SQLite migration and preserved old sessions. Do not add Jev, classical HPO, an LLM, architecture search, or a broad model zoo.
+
+This phase has two distinct gates: a cheap offline CPU path to verify wiring and a **real CIFAR-10 baseline plus one selected candidate** to verify the task. If dataset access or compute blocks the second gate, finish the first, document the exact blocked command, and leave Phase 2 marked incomplete rather than calling a fixture run CIFAR-10.
+
+## Fixed task and protocol
+
+- Use official CIFAR-10 through torchvision. Add compatible, reproducibly pinned PyTorch/torchvision versions as an optional vision dependency; do not make the generic core require Torch. Download only through an explicit option into a configurable data cache; never commit data. Fail clearly if neither cached data nor allowed download is available.
+- From the official 50,000-image training portion, create a fixed stratified 45,000/5,000 train/validation split with a saved seed and exact indices. Record dataset source/version and an integrity/content identity, split-index hash, preprocessing version, and task protocol version. Check these on resume. The official 10,000-image test portion must not be loaded by search, candidate selection, smoke metrics, or best-so-far reporting.
+- Implement one modest, fixed CNN, initialized afresh for every trial. Define train transforms and normalization explicitly; validation is deterministic and has no training augmentation. Each session freezes epochs or train steps, batch size, split, model, optimizer/scheduler definitions, metric, and device class/protocol. Every candidate receives the same **training budget** and evaluation method; no early stopping or variable-budget candidate. Report if CUDA nondeterminism remains despite setting Python/NumPy/Torch seeds and practical deterministic options.
+- Maximize **final fixed-epoch validation top-1 accuracy**. Also save training loss and validation loss. Compare only completed finite metrics. Never use test accuracy for selection. This short training protocol is an engineering benchmark, not evidence of strong CIFAR-10 performance.
+
+## Bounded search space
+
+Start from a documented baseline config and a small operator library: learning-rate up/down within explicit bounds, weight-decay change, optimizer swap with valid optimizer-specific hyperparameters, and optionally a training-only augmentation toggle. Implement only operators that change actual execution. Keep model architecture fixed. Candidate generation starts from the best completed config and produces **complete resulting configs**, named changes, and their parent. Discard invalid, no-op, previously attempted, and duplicate configs before offering a bounded list. Use the Phase 1 candidate ID and persisted-offer rules; do not introduce task logic into the controller.
+
+Assign the next trial's predetermined training seed to every candidate in that offer and save it with the chosen full spec. The seed schedule is derived from session seed and trial index, independently of controller RNG. The baseline seed and trial-index schedule must be the same when comparing controllers with the same search seed. A different config at the same index uses that index's seed; this controls one source of variation but does not eliminate training noise. Keep single-worker serial execution.
+
+## Execution, failure, and history
+
+- Run one training trial in a supervised child process. Persist the selected pending trial before launch, capture exit status, timeout, and per-trial stdout/stderr artifacts, and clean up the child process group on timeout/interruption. Save structured metrics atomically on success. Do not load a checkpoint after interruption or silently retry under a changed batch size/spec. A failed/OOM trial consumes one attempt and the loop may continue; if the baseline fails, end the session without a best. A DB/invariant failure stops visibly.
+- Record wall duration and hardware/device description. Record peak CUDA allocated memory if measured. Do not label elapsed wall time as GPU-active time; mark GPU-active time unavailable unless actually measured. Artifacts live under a configurable run root as relative references from the DB. SQLite contains metadata, not binary checkpoints. Store/checkpoint weights only if needed for a concrete verification case; never make them mandatory for HPO.
+- Provide CLI arguments or equivalent for data dir, run dir, explicit download, device `auto|cpu|cuda`, epochs, budget, seed, timeout, and a clearly named smoke/fixture mode. A CPU smoke can use a small cached CIFAR subset or generated CIFAR-shaped fixture. Give a fixture its own task/protocol identity and label it **fixture** in all history/export output. Never silently switch a requested real run to fixture data.
+- Add a readable history/export command (CSV or JSON) with session/trial/parent, candidate/operator, full config and seed, status, objective/secondary metrics, dataset and split identity, protocol, source digest, duration, hardware, and error. A best-so-far table is sufficient; publication charts can wait. Show failures and interrupted attempts, not only successful trials.
+
+## Verification and acceptance gate
+
+Use small tests for stratified disjoint split and persisted indices, train/validation separation, deterministic candidate generation and deduplication, seed/spec linkage, one CPU forward/backward plus final metric calculation, child exit/timeout cleanup, and resume across pending/running states without repeat. Keep unit tests independent of a dataset download and full training. Run all Phase 1 tests as a regression gate.
+
+Then run an offline CPU smoke with an explicit fixture or cached subset and inspect status/history. Where data and resources permit, run **real** CIFAR-10 with one baseline and at least one selected different config, both using the same split and one fixed short training budget (start with one epoch and budget 2). Keep a practical per-trial timeout and report elapsed time and device. Verify the two specs, indices/protocol, seed schedule, parent link, and metrics in export. If a one-epoch result is noisy, report it as a wiring demonstration only. Do not expand to a sweep to make one candidate look good.
+
+Phase 2 passes only when focused tests, CPU smoke, and the real two-trial demonstration succeed. A missing dataset/GPU does not justify a false pass; CPU real training is acceptable if it finishes within a practical bound. Record the exact blocker and runnable follow-up command otherwise.
+
+## Long-run and Git instructions
+
+- Inspect Phase 1 interfaces, DB schema, source identity, Git status, instructions, and local user edits. Preserve history through migrations; old sessions remain readable, though a changed executable digest may prevent resuming them. Write a short implementation plan and proceed through routine choices autonomously.
+- Commit coherent **passing** units such as dataset/split/model, supervised trial execution, operators/CLI/export, and tests/docs. Use focused checks before each commit and the full phase gate at the end. Stage only work you own; inspect the staged diff and `.gitignore` before every commit. Do not rewrite history, push, or commit datasets, run DBs, artifacts, credentials, or unrelated user changes. If a commit cannot be made, explain exactly why and leave an organized diff.
+- Do not alter executable source or dependencies while a real session is running. Finish implementation and commit before the final two-trial demonstration; if it reveals a bug, stop it, fix and commit, then start a **new** session with the corrected source. Preserve the old record as evidence of the failed attempt. Never fabricate intermediate commits after a long run.
+- Review the diff for split leakage, varying budgets, configuration drift, stale or orphaned subprocesses, accidental test-set use, wrong resume accounting, and misleading claims. Report commit IDs, commands/results, real versus fixture verification, any open gate, and Phase 3 handoff. Stop before Phase 3.
