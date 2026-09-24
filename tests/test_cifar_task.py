@@ -1,0 +1,47 @@
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+from jevresearch.candidate_generator import CandidateGenerator
+from jevresearch.core import SearchState
+from jevresearch.tasks.vision.cifar10.task import CifarTask, fixture_labels, stratified_indices
+
+
+class CifarTaskTests(unittest.TestCase):
+    def test_stratified_split_is_saved_and_disjoint(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task = CifarTask(root / "data", root / "run", fixture=True)
+            manifest = json.loads(task.split_path.read_text())
+            train, val = manifest["train_indices"], manifest["val_indices"]
+            self.assertEqual((len(train), len(val)), (80, 20))
+            self.assertFalse(set(train) & set(val))
+            self.assertEqual(set(train) | set(val), set(range(100)))
+            self.assertEqual(stratified_indices(fixture_labels(), 1729, 8), (train, val))
+            self.assertEqual(task.data_split, manifest["split_sha256"])
+            self.assertEqual(CifarTask(root / "data", root / "run", fixture=True).details(), task.details())
+            with self.assertRaises(ValueError):
+                CifarTask(root / "data", root / "run", fixture=True, split_seed=1730)
+
+    def test_candidates_are_complete_valid_and_novel(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            task = CifarTask(Path(tmp) / "data", Path(tmp) / "run", fixture=True)
+            state = SearchState(1, 1, 3, 0, 0.1, task.baseline(), ())
+            generator = CandidateGenerator()
+            candidates = generator.generate(task, state, 5, "source")
+            self.assertEqual(candidates, generator.generate(task, state, 5, "source"))
+            self.assertEqual(len(candidates), len({c.spec.config_key for c in candidates}))
+            self.assertTrue(all(c.parent_id == 0 for c in candidates))
+            self.assertTrue(all(c.spec.seed == candidates[0].spec.seed for c in candidates))
+            for candidate in candidates:
+                task.validate(candidate.config)
+                self.assertNotEqual(candidate.config, task.baseline())
+            attempted = ({"config_key": candidates[0].spec.config_key},)
+            state = SearchState(1, 2, 3, 0, 0.1, task.baseline(), attempted)
+            self.assertNotIn(candidates[0].spec.config_key,
+                             {c.spec.config_key for c in generator.generate(task, state, 5, "source")})
+
+
+if __name__ == "__main__":
+    unittest.main()
