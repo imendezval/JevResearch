@@ -6,14 +6,34 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from jevresearch.controller import RandomController
-from jevresearch.runner import Runner
-from jevresearch.storage import Store
-from jevresearch.subprocess_execution import SubprocessExecutor
+from jevresearch.controllers.random import RandomController
+from jevresearch.core import ExperimentSpec
+from jevresearch.core.runner import Runner
+from jevresearch.storage.history import Store
+from jevresearch.execution.subprocess import SubprocessExecutor
 from jevresearch.tasks.vision.cifar10 import CifarTask
 
 
 class Phase2ExecutionTests(unittest.TestCase):
+    def test_process_executor_uses_task_supplied_worker(self):
+        class OtherTask:
+            def worker_payload(self, spec):
+                return {"task": spec.task}
+
+            def worker_command(self, input_path, result_path):
+                code = ("import json,sys; from pathlib import Path; "
+                        "payload=json.loads(Path(sys.argv[1]).read_text()); "
+                        "Path(sys.argv[2]).write_text(json.dumps(dict(status='completed', "
+                        "objective=0.5, metrics={'task':payload['task']}, duration=0.0)))")
+                return [sys.executable, "-c", code, str(input_path), str(result_path)]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            spec = ExperimentSpec("other", "v1", {}, "split", 1, 1, "source")
+            result = SubprocessExecutor(tmp, 5).execute(OtherTask(), spec, 1)
+            self.assertEqual(result.status, "completed")
+            self.assertEqual(result.objective, 0.5)
+            self.assertEqual(result.metrics["task"], "other")
+
     def test_old_unversioned_db_migrates_without_losing_session(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "old.db"

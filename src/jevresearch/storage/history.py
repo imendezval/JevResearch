@@ -8,7 +8,7 @@ import time
 from dataclasses import asdict
 from pathlib import Path
 
-from .core import Candidate, ExperimentResult, ExperimentSpec, SearchState, canonical
+from ..core import Candidate, ExperimentResult, ExperimentSpec, SearchState, canonical
 
 
 class InvariantError(RuntimeError):
@@ -154,7 +154,7 @@ class Store:
         settings = json.loads(self.session(sid)["settings"])
         best = None
         history = []
-        from .core import better, valid_objective
+        from ..core import better, valid_objective
         for row in rows:
             result = json.loads(row["result"]) if row["result"] else None
             history.append({"trial_id": row["number"], "number": row["number"],

@@ -197,10 +197,10 @@ The interesting long-term question is:
 
 # 4. Repository Structure
 
-Recommended initial structure:
+Current implementation structure (only active components are present):
 
 ```text
-jevresearch/
+src/jevresearch/
 ├── core/
 │   ├── state.py
 │   ├── experiment.py
@@ -212,56 +212,31 @@ jevresearch/
 │
 ├── controllers/
 │   ├── base.py
-│   ├── random.py
-│   ├── jev.py
-│   ├── tpe.py
-│   ├── cmaes.py
-│   └── hybrid.py
+│   └── random.py
 │
 ├── operators/
 │   ├── base.py
 │   ├── hyperparams.py
-│   ├── optimizer.py
-│   ├── scheduler.py
-│   ├── architecture.py
-│   ├── regularization.py
-│   └── augmentation.py
-│
-├── agents/
-│   ├── base.py
-│   └── llm.py
+│   └── optimizer.py
 │
 ├── tasks/
 │   ├── base.py
+│   ├── synthetic.py
 │   ├── vision/
-│   │   └── cifar10/
-│   ├── language/
-│   │   └── autoresearch/
-│   └── tabular/
+│   │   └── cifar10/{task.py, model.py, worker.py}
 │
 ├── execution/
 │   ├── base.py
 │   ├── local.py
-│   ├── subprocess.py
-│   └── sandbox.py
+│   └── subprocess.py
 │
 ├── storage/
-│   ├── history.py
-│   ├── runs.py
-│   └── checkpoints.py
-│
-├── analysis/
-│   ├── plots.py
-│   ├── trajectories.py
-│   ├── cost.py
-│   └── calibration.py
-│
-├── configs/
-├── scripts/
-├── tests/
-├── README.md
-└── architecture.md
+│   └── history.py
+├── cli.py
+└── source.py
 ```
+
+Thin modules at the package root preserve Phase 1 import paths. New controllers, operators, tasks, executors, storage adapters, agents, and analysis modules belong in these packages when implemented; do not add empty future modules.
 
 ---
 
@@ -271,26 +246,16 @@ jevresearch/
 
 A task represents the underlying ML problem.
 
-Conceptually:
+The implemented task contract is:
 
 ```python
 class Task:
-    def initial_state(self):
-        ...
-
-    def search_space(self):
-        ...
-
-    def apply_candidate(self, candidate, state):
-        # Return an immutable ExperimentSpec, not a modified SearchState.
-        ...
-
-    def run(self, spec):
-        ...
-
-    def evaluate(self, run_output):
-        ...
+    def baseline(self) -> dict: ...
+    def proposals(self, state) -> list: ...
+    def validate(self, config) -> None: ...
 ```
+
+An inline task also defines `evaluate(spec)`. A process task supplies `worker_payload(spec)` and `worker_command(input_path, result_path)`; its worker trains and evaluates, returning a structured result. The generic executor supervises that command without importing the task.
 
 A task should encapsulate:
 
@@ -474,38 +439,24 @@ initialize task
 initialize candidate generator
 initialize controller
 load/create SearchState
+persist baseline ExperimentSpec as a pending trial when creating a session
 
-while budget remains:
-    candidates = generator.generate(task, state)
-
-    decision = controller.select(
-        state,
-        candidates
-    )
-
-    spec = task.apply_candidate(
-        decision,
-        state
-    )
-
-    if remaining budget is clearly insufficient for a full run of spec:
-        break
-
-    persist spec, candidate pool, and controller decision before execution
-
-    run_output = executor.run(spec)
-
-    result = task.evaluate(run_output)
-
-    history.append(result)
-
-    state = update_state(state, result)
-    persist state and campaign progress
+while session has work:
+    if there is no pending trial:
+        candidates = generator.generate(task, state)
+        persist candidate pool and controller input
+        decision = controller.select(state, candidates)
+        spec = selected candidate's immutable ExperimentSpec
+        persist decision and selected pending trial atomically
+    mark trial running
+    result = executor.execute(task, spec, trial_id)
+    persist result or failure atomically
+    reload SearchState from history
 ```
 
 The core runner should not contain task-specific logic.
 
-Each experiment uses a fixed training budget. The initial implementation uses a fixed attempted-trial campaign budget, including failures. A wall-clock campaign limit and separate controller/training accounting remain goals for later infrastructure work. Failures must also be persisted.
+The task owns its fixed per-trial training budget; the current campaign budget counts attempted trials, including failures. The worker records training duration and the executor records trial wall duration. A wall-clock campaign limit and separate controller-time accounting remain goals for later infrastructure work.
 
 ---
 

@@ -4,11 +4,11 @@ import argparse
 import json
 from pathlib import Path
 
-from .controller import RandomController
-from .runner import Runner
-from .storage import Store
-from .subprocess_execution import SubprocessExecutor
-from .synthetic import SyntheticTask
+from .controllers.random import RandomController
+from .core.runner import Runner
+from .execution.subprocess import SubprocessExecutor
+from .storage.history import Store
+from .tasks.synthetic import SyntheticTask
 from .tasks.vision.cifar10 import CifarTask
 
 

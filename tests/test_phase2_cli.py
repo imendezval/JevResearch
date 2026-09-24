@@ -4,10 +4,10 @@ import unittest
 from pathlib import Path
 
 from jevresearch.cli import history
-from jevresearch.controller import RandomController
+from jevresearch.controllers.random import RandomController
 from jevresearch.core import ExperimentResult
-from jevresearch.runner import Runner
-from jevresearch.storage import Store
+from jevresearch.core.runner import Runner
+from jevresearch.storage.history import Store
 from jevresearch.tasks.vision.cifar10 import CifarTask
 
 

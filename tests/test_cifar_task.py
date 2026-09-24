@@ -4,8 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from jevresearch.candidate_generator import CandidateGenerator
-from jevresearch.candidate_generator import make_spec
+from jevresearch.core.candidate_generator import CandidateGenerator, make_spec
 from jevresearch.core import SearchState
 from jevresearch.tasks.vision.cifar10.task import CifarTask, fixture_labels, stratified_indices
 
@@ -14,7 +13,7 @@ class CifarTaskTests(unittest.TestCase):
     @unittest.skipUnless(importlib.util.find_spec("torch") and importlib.util.find_spec("torchvision"),
                          "vision dependencies are optional")
     def test_worker_uses_saved_train_and_validation_only(self):
-        from jevresearch.cifar_worker import _datasets, train
+        from jevresearch.tasks.vision.cifar10.worker import _datasets, train
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             task = CifarTask(root / "data", root / "run", fixture=True, batch_size=16)

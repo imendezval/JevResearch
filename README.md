@@ -2,6 +2,8 @@
 
 Phase 1 provides a CPU-only, deterministic synthetic search task and a durable SQLite experiment loop. It uses Python's standard library at runtime. The task's optimum is `x=2, y=-1`, with objective `0` (larger is better). Each experiment changes one coordinate by one step. Trial 0 is the baseline.
 
+The implementation follows the package boundaries in [the architecture](docs/architecture.md): `core` owns specs, state, candidate generation, and the runner; `controllers` selects; `operators` defines explicit config moves; `tasks` owns data and training protocols; `execution` runs trials; and `storage` persists history. Thin top-level modules retain the original Phase 1 imports. The CIFAR worker belongs to its task, and a process task supplies its worker command to the generic executor.
+
 From the repository root, run:
 
 ```bash

@@ -10,6 +10,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from ....core import SearchState, canonical, digest
+from ....operators import ScaleLearningRate, SetWeightDecay, SwapOptimizer
 
 
 def stratified_indices(labels, seed: int, train_per_class: int):
@@ -114,7 +115,7 @@ class CifarTask:
         return {"spec": asdict(spec), "details": self.details(), "split": self.split}
 
     def worker_command(self, input_path, result_path):
-        return [sys.executable, "-m", "jevresearch.cifar_worker",
+        return [sys.executable, "-m", "jevresearch.tasks.vision.cifar10.worker",
                 "--input", str(input_path), "--output", str(result_path)]
 
     def baseline(self):
@@ -146,22 +147,13 @@ class CifarTask:
 
     def proposals(self, state: SearchState):
         base = state.incumbent_config or self.baseline()
-        out = []
-        for factor, name in ((0.5, "lr_down"), (2, "lr_up")):
-            config = dict(base)
-            config["lr"] = round(base["lr"] * factor, 10)
-            out.append((name, {"factor": factor}, config))
-        for wd in (0.0, 0.001):
-            config = dict(base)
-            config["weight_decay"] = wd
-            out.append(("set_weight_decay", {"value": wd}, config))
-        config = dict(base)
-        if base["optimizer"] == "sgd":
-            config.pop("momentum")
-            config.update(optimizer="adamw", beta1=0.9, beta2=0.999)
-        else:
-            config.pop("beta1")
-            config.pop("beta2")
-            config.update(optimizer="sgd", momentum=0.9)
-        out.append(("swap_optimizer", {"to": config["optimizer"]}, config))
-        return out
+        operators = (ScaleLearningRate(0.5), ScaleLearningRate(2),
+                     SetWeightDecay(0.0), SetWeightDecay(0.001), SwapOptimizer())
+        proposals = []
+        for operator in operators:
+            config = operator.apply(base)
+            parameters = operator.parameters()
+            if isinstance(operator, SwapOptimizer):
+                parameters["to"] = config["optimizer"]
+            proposals.append((operator.name, parameters, config))
+        return proposals

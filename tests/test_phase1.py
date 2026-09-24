@@ -173,7 +173,7 @@ class Phase1Tests(unittest.TestCase):
     def test_session_compatibility_and_uniqueness(self):
         runner = self.runner()
         sid = runner.start(3, 1)
-        with patch("jevresearch.runner.identity", return_value={"digest": "changed"}):
+        with patch("jevresearch.core.runner.identity", return_value={"digest": "changed"}):
             with self.assertRaises(InvariantError):
                 runner.run(sid)
         with self.assertRaises(InvariantError):
