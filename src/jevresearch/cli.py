@@ -7,7 +7,6 @@ from pathlib import Path
 from .controllers.jev import live_controller
 from .controllers.random import RandomController
 from .controllers.single import SingleCandidateController
-from .core.candidate_generator import CandidateGenerator
 from .core.runner import Runner
 from .core.reporting import history, protocol_differences
 from .core.study_runner import StudyRunner
@@ -16,7 +15,7 @@ from .execution.subprocess import SubprocessExecutor
 from .storage.history import Store
 from .tasks.synthetic import SyntheticTask
 from .tasks.vision.cifar10 import CifarTask
-from .tasks.vision.cifar10.global_search import GlobalCandidateGenerator
+from .tasks.vision.cifar10.global_search import cifar_generator
 
 
 def compare(random_history: dict, jev_history: dict):
@@ -69,10 +68,8 @@ def _cifar_runner(store, settings, controller):
                      split_seed=details["split_seed"], epochs=details["epochs"],
                      batch_size=details["batch_size"], device=details["device"],
                      download=False, fixture=details["dataset"] == "cifar10_fixture")
-    strategy = settings.get("proposal_strategy", "local-move")
-    generator = (CandidateGenerator(settings.get("candidate_limit", 8)) if strategy == "local-move"
-                 else GlobalCandidateGenerator(settings["proposal_domain"], strategy,
-                                               settings["candidate_limit"]))
+    generator = cifar_generator(settings.get("proposal_strategy", "local-move"),
+                                settings.get("proposal_domain"), settings.get("candidate_limit", 8))
     return Runner(store, task, controller,
                   SubprocessExecutor(details["run_dir"], settings["execution_details"]["timeout"]), generator)
 
@@ -233,8 +230,7 @@ def main(argv=None):
                          epochs=args.epochs, batch_size=args.batch_size,
                          device=device, download=args.download, fixture=args.fixture)
         store = Store(db_path)
-        generator = (CandidateGenerator() if args.proposal_strategy == "local-move"
-                     else GlobalCandidateGenerator(args.proposal_domain, args.proposal_strategy))
+        generator = cifar_generator(args.proposal_strategy, args.proposal_domain)
     else:
         store = Store(args.db)
     try:

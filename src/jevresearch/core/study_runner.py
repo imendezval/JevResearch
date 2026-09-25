@@ -15,8 +15,7 @@ from ..execution.subprocess import SubprocessExecutor
 from ..source import identity
 from ..storage.history import InvariantError, Store
 from ..tasks.vision.cifar10 import CifarTask
-from ..tasks.vision.cifar10.global_search import GlobalCandidateGenerator
-from .candidate_generator import CandidateGenerator
+from ..tasks.vision.cifar10.global_search import cifar_generator
 from .study import StudyArm, StudySpec
 from .runner import Runner
 from .experiment import ExperimentSpec, canonical
@@ -54,10 +53,8 @@ class StudyRunner:
         executor = SubprocessExecutor(run_dir, self.spec.trial_timeout_seconds,
                                       safe_store=store,
                                       checkpoint_policy=self.spec.checkpoint_policy)
-        generator = (CandidateGenerator(self.spec.candidate_limit)
-                     if arm.proposal_strategy == "local-move" else
-                     GlobalCandidateGenerator(arm.proposal_domain, arm.proposal_strategy,
-                                              self.spec.candidate_limit))
+        generator = cifar_generator(arm.proposal_strategy, arm.proposal_domain,
+                                    self.spec.candidate_limit)
         return Runner(store, task, controller, executor, generator)
 
     def _active(self, store: Store, study_id: int):

@@ -6,9 +6,15 @@ import random
 from dataclasses import asdict
 
 from ....core.candidate import Candidate
-from ....core.candidate_generator import make_spec, trial_seed
+from ....core.candidate_generator import CandidateGenerator, make_spec, trial_seed
 from ....core.experiment import digest
 from .domain import CifarDomain
+
+
+def cifar_generator(strategy: str, domain: str | None = None, candidate_limit: int = 8):
+    if strategy == "local-move":
+        return CandidateGenerator(candidate_limit)
+    return GlobalCandidateGenerator(domain, strategy, candidate_limit)
 
 
 class GlobalCandidateGenerator:
