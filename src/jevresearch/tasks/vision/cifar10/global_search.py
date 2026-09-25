@@ -39,6 +39,10 @@ class GlobalCandidateGenerator:
                    "rejection_limit": self.rejection_limit}
         if self.proposer is not None:
             details.update(self.proposer.details())
+        else:
+            details.update({"sampler_seed": "sha256(search_seed:attempted_trials)",
+                            "sampler_options": {"categorical": "uniform", "positive_float": "log-uniform",
+                                                "max_draws": self.rejection_limit}})
         return details
 
     @property

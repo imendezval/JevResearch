@@ -66,7 +66,10 @@ class GlobalSearchTests(unittest.TestCase):
             self.assertEqual([row["spec"]["seed"] for row in rows],
                              [trial_seed(7, number) for number in range(budget)])
             self.assertTrue(all(row["spec"]["parent_id"] is None for row in rows))
-            self.assertEqual(json.loads(store.session(sid)["settings"])["proposal_domain"], domain)
+            settings = json.loads(store.session(sid)["settings"])
+            self.assertEqual(settings["proposal_domain"], domain)
+            self.assertIn("sampler_seed", settings)
+            self.assertIn("sampler_options", settings)
             for row in store.trials(sid)[1:]:
                 offer = store.offer(sid, row["offer_id"])
                 offered = json.loads(offer["candidates"])
