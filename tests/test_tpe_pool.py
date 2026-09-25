@@ -234,6 +234,45 @@ class TpePoolTests(unittest.TestCase):
         self.assertEqual(len(self.store.trials(sid)), 3)
         self.assertEqual(len(self.store.offers(sid)), 2)
 
+    def test_crash_after_atomic_selection_runs_saved_pending_trial(self):
+        runner = self.runner(width=2)
+        sid = runner.start(2, 7)
+        runner.run(sid, 1)
+        original = self.store.select
+
+        def select_then_crash(*args):
+            original(*args)
+            raise RuntimeError("injected crash after selection")
+
+        with patch.object(self.store, "select", side_effect=select_then_crash):
+            with self.assertRaisesRegex(RuntimeError, "injected crash after selection"):
+                runner.run(sid)
+        self.assertEqual(self.store.trials(sid)[-1]["status"], "pending")
+        saved = self.offers(sid)[0]
+        self.reopen()
+        runner = self.runner(width=2)
+        with patch.object(runner.generator, "generate", side_effect=AssertionError("redrew offer")):
+            runner.run(sid)
+        self.assertEqual(self.offers(sid)[0], saved)
+        self.assertEqual([row["status"] for row in self.store.trials(sid)],
+                         ["completed", "completed"])
+
+    def test_crash_before_result_commit_records_interruption_once(self):
+        runner = self.runner(width=2)
+        sid = runner.start(3, 7)
+        runner.run(sid, 1)
+        with patch.object(self.store, "finish", side_effect=RuntimeError("injected commit crash")):
+            with self.assertRaisesRegex(RuntimeError, "injected commit crash"):
+                runner.run(sid)
+        self.assertEqual(self.store.trials(sid)[-1]["status"], "running")
+        self.reopen()
+        self.runner(width=2).run(sid)
+        rows = self.store.proposal_history(sid)
+        self.assertEqual([row["status"] for row in rows],
+                         ["completed", "interrupted", "completed"])
+        self.assertEqual(rows[2]["proposal"]["completed_observations"], 1)
+        self.assertEqual(len(self.store.offers(sid)), 2)
+
     def test_cli_rejects_invalid_pool_pairings(self):
         base = ["cifar-run", "--data-dir", str(self.root / "data"),
                 "--run-dir", str(self.root / "cli"), "--budget", "2",
