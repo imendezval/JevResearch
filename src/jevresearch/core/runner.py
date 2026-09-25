@@ -70,6 +70,7 @@ class Runner:
                     "controller_details": getattr(self.controller, "details", lambda: {})(),
                     "candidate_limit": self.generator.max_candidates,
                     "task_details": getattr(self.task, "details", lambda: {})()}
+        settings.update(self.generator.details())
         return self.store.create(settings, source, initial_rng(seed), baseline, study_member)
 
     def _compatible(self, sid: int):
@@ -83,6 +84,7 @@ class Runner:
                 or settings.get("execution_details", {}) != getattr(self.executor, "details", lambda: {})()
                 or settings.get("controller_details", {}) != getattr(self.controller, "details", lambda: {})()
                 or settings.get("candidate_limit", 8) != self.generator.max_candidates
+                or any(settings.get(key) != value for key, value in self.generator.details().items())
                 or settings.get("task_details", {}) != getattr(self.task, "details", lambda: {})()):
             raise InvariantError("session task/protocol/controller or executable source changed; start a new session")
         return settings, source
@@ -179,9 +181,10 @@ class Runner:
                 return state
             offer = self.store.outstanding(sid)
             if offer is None:
-                candidates = self.generator.generate(self.task, state, settings["seed"], source["digest"])
+                candidates = self.generator.generate(self.task, state, settings["seed"], source["digest"],
+                                                     self.store.proposal_history(sid))
                 if not candidates:
-                    self.store.stop(sid, "no novel candidates")
+                    self.store.stop(sid, self.generator.exhaustion_reason)
                     return state
                 oid = self.store.save_offer(sid, state, candidates, self.store.session(sid)["rng_state"])
                 offer = self.store.offer(sid, oid)

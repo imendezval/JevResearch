@@ -1,0 +1,1 @@
+"""Optional classical proposal adapters."""

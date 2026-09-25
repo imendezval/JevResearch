@@ -27,7 +27,7 @@ class CandidateGenerator:
         self.max_candidates = max_candidates
 
     def generate(self, task: Task, state: SearchState, seed: int,
-                 source_digest: str) -> tuple[Candidate, ...]:
+                 source_digest: str, history=()) -> tuple[Candidate, ...]:
         seen = {entry["config_key"] for entry in state.history}
         candidates = []
         for operator, parameters, config in task.proposals(state):
@@ -44,3 +44,10 @@ class CandidateGenerator:
             candidates.append(Candidate(cid, operator, parameters, state.best_trial_id,
                                         dict(config), spec))
         return tuple(candidates[:self.max_candidates])
+
+    def details(self):
+        return {}
+
+    @property
+    def exhaustion_reason(self):
+        return "no novel candidates"

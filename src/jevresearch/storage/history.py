@@ -195,6 +195,19 @@ class Store:
     def trials(self, sid: int):
         return self.db.execute("SELECT * FROM trials WHERE session_id=? ORDER BY number", (sid,)).fetchall()
 
+    def proposal_history(self, sid: int):
+        """Read-only complete trial/config view for proposal replay."""
+        offers = {row["id"]: row for row in self.offers(sid)}
+        records = []
+        for row in self.trials(sid):
+            choices = json.loads(offers[row["offer_id"]]["candidates"]) if row["offer_id"] else ()
+            choice = next((c for c in choices if c["id"] == row["candidate_id"]), None)
+            records.append({"number": row["number"], "status": row["status"],
+                            "config_key": row["config_key"], "spec": json.loads(row["spec"]),
+                            "result": json.loads(row["result"]) if row["result"] else None,
+                            "proposal": choice["parameters"] if choice else None})
+        return tuple(records)
+
     def outstanding(self, sid: int):
         return self.db.execute("SELECT * FROM offers WHERE session_id=? AND selected_id IS NULL ORDER BY id DESC LIMIT 1",
                                (sid,)).fetchone()
