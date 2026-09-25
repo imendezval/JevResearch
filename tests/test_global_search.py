@@ -10,6 +10,7 @@ from jevresearch.controllers.jev import JevController
 from jevresearch.core import ExperimentResult
 from jevresearch.core.candidate_generator import trial_seed
 from jevresearch.core.runner import Runner
+from jevresearch.core.reporting import protocol_differences
 from jevresearch.storage.history import Store
 from jevresearch.tasks.vision.cifar10 import CifarTask
 from jevresearch.tasks.vision.cifar10.global_search import GlobalCandidateGenerator
@@ -147,6 +148,35 @@ class GlobalSearchTests(unittest.TestCase):
             self.assertEqual(len(pools[0]), 8)
             self.assertEqual(store.decision_attempts(sessions[1])[0]["status"], "selected")
             store.close()
+
+    def test_duplicate_resample_cap_stops_without_training_attempt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = Store(root / "history.sqlite")
+            task = CifarTask(root / "data", root / "run", fixture=True)
+            generator = GlobalCandidateGenerator("cifar-sgd-numeric-v1", "global-random")
+            runner = Runner(store, task, SingleCandidateController(), CheapExecutor(), generator)
+            sid = runner.start(2, 7)
+            baseline_params = generator.domain.parameters(task.baseline())
+            with patch.object(type(generator.domain), "random_parameters", return_value=baseline_params):
+                runner.run(sid)
+            self.assertEqual(len(store.trials(sid)), 1)
+            self.assertEqual(len(store.offers(sid)), 0)
+            self.assertEqual(store.session(sid)["stop_reason"], "global proposal resample limit reached")
+            store.close()
+
+    def test_comparison_requires_same_domain_not_same_strategy(self):
+        base = {"settings": {"task": "cifar10", "protocol": "official-train-v1",
+                             "proposal_strategy": "global-random", "proposal_domain": "cifar-mixed-v1",
+                             "domain_fingerprint": "mixed", "task_details": {"device": "cpu"}},
+                "source": {"digest": "same"}}
+        other = {"settings": {**base["settings"], "proposal_strategy": "tpe"},
+                 "source": {"digest": "same"}}
+        self.assertEqual(protocol_differences(base, other), [])
+        other["settings"]["proposal_domain"] = "cifar-sgd-numeric-v1"
+        other["settings"]["domain_fingerprint"] = "numeric"
+        self.assertEqual(protocol_differences(base, other),
+                         ["proposal_domain", "domain_fingerprint"])
 
 
 if __name__ == "__main__":
