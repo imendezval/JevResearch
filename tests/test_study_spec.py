@@ -64,12 +64,21 @@ class StudySpecTests(unittest.TestCase):
              "proposal_domain": "cifar-mixed-v1"},
             {"id": "pool", "controller": "random", "proposal_strategy": "global-pool",
              "proposal_domain": "cifar-mixed-v1"},
+            {"id": "jev_pool", "controller": "jev", "proposal_strategy": "global-pool",
+             "proposal_domain": "cifar-mixed-v1", "model": "jev-1.13.0", "api_timeout": 4.0,
+             "sdk_retries": 0, "max_api_calls": 2},
             {"id": "cma", "controller": "single", "proposal_strategy": "cmaes",
              "proposal_domain": "cifar-sgd-numeric-v1"},
         ]
-        self.assertEqual(len(self.load({**self.raw, "arms": valid})[0].arms), 4)
+        parsed = self.load({**self.raw, "arms": valid})[0].arms
+        self.assertEqual(len(parsed), 5)
+        self.assertEqual((parsed[3].model, parsed[3].api_timeout, parsed[3].sdk_retries,
+                          parsed[3].max_api_calls, parsed[3].proposal_strategy, parsed[3].proposal_domain),
+                         ("jev-1.13.0", 4.0, 0, 2, "global-pool", "cifar-mixed-v1"))
         for arm in ({**valid[-1], "proposal_domain": "cifar-mixed-v1"},
                     {**valid[1], "controller": "jev"},
-                    {**valid[2], "controller": "single"}):
+                    {**valid[2], "controller": "single"},
+                    {"id": "local_single", "controller": "single"},
+                    {**valid[0], "controller": "random"}):
             with self.subTest(arm=arm), self.assertRaises(ValueError):
                 self.load({**self.raw, "arms": [arm]})
