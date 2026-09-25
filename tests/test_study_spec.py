@@ -55,3 +55,21 @@ class StudySpecTests(unittest.TestCase):
             self.assertEqual(store.db.execute("PRAGMA user_version").fetchone()[0], 5)
         finally:
             store.close()
+
+    def test_global_arm_pairings_and_categorical_cma_rejected(self):
+        valid = [
+            {"id": "global_random", "controller": "single", "proposal_strategy": "global-random",
+             "proposal_domain": "cifar-mixed-v1"},
+            {"id": "tpe", "controller": "single", "proposal_strategy": "tpe",
+             "proposal_domain": "cifar-mixed-v1"},
+            {"id": "pool", "controller": "random", "proposal_strategy": "global-pool",
+             "proposal_domain": "cifar-mixed-v1"},
+            {"id": "cma", "controller": "single", "proposal_strategy": "cmaes",
+             "proposal_domain": "cifar-sgd-numeric-v1"},
+        ]
+        self.assertEqual(len(self.load({**self.raw, "arms": valid})[0].arms), 4)
+        for arm in ({**valid[-1], "proposal_domain": "cifar-mixed-v1"},
+                    {**valid[1], "controller": "jev"},
+                    {**valid[2], "controller": "single"}):
+            with self.subTest(arm=arm), self.assertRaises(ValueError):
+                self.load({**self.raw, "arms": [arm]})

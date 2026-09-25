@@ -9,11 +9,13 @@ from pathlib import Path
 
 from ..controllers.jev import live_controller
 from ..controllers.random import RandomController
+from ..controllers.single import SingleCandidateController
 from ..execution.ownership import study_lock
 from ..execution.subprocess import SubprocessExecutor
 from ..source import identity
 from ..storage.history import InvariantError, Store
 from ..tasks.vision.cifar10 import CifarTask
+from ..tasks.vision.cifar10.global_search import GlobalCandidateGenerator
 from .candidate_generator import CandidateGenerator
 from .study import StudyArm, StudySpec
 from .runner import Runner
@@ -30,6 +32,8 @@ class StudyRunner:
     def _controller(self, arm: StudyArm):
         if arm.controller == "random":
             return RandomController()
+        if arm.controller == "single":
+            return SingleCandidateController()
         return live_controller(arm.model, arm.api_timeout, arm.sdk_retries,
                                arm.max_api_calls)
 
@@ -50,8 +54,11 @@ class StudyRunner:
         executor = SubprocessExecutor(run_dir, self.spec.trial_timeout_seconds,
                                       safe_store=store,
                                       checkpoint_policy=self.spec.checkpoint_policy)
-        return Runner(store, task, controller, executor,
-                      CandidateGenerator(self.spec.candidate_limit))
+        generator = (CandidateGenerator(self.spec.candidate_limit)
+                     if arm.proposal_strategy == "local-move" else
+                     GlobalCandidateGenerator(arm.proposal_domain, arm.proposal_strategy,
+                                              self.spec.candidate_limit))
+        return Runner(store, task, controller, executor, generator)
 
     def _active(self, store: Store, study_id: int):
         rows = store.activity(study_id)

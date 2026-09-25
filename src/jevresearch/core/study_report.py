@@ -61,6 +61,8 @@ def study_report(store, study_id: int):
             trajectory.append({"attempted_trials": trial["trial_id"] + 1,
                                "trial_id": trial["trial_id"],
                                "candidate_id": trial["candidate_id"],
+                               "proposal_phase": trial["parameters"].get("phase", "baseline"
+                                                                            if trial["trial_id"] == 0 else "local-move"),
                                "status": trial["status"],
                                "objective": result["objective"] if result else None,
                                "error_type": result["error_type"] if result else None,
@@ -73,8 +75,13 @@ def study_report(store, study_id: int):
         controller_summary = entry["controller_summary"]
         rate = spec["compute_hourly_usd"]
         item.update({"status": session["status"], "stop_reason": session["stop_reason"],
+                     "proposal_strategy": entry["proposal_strategy"],
+                     "proposal_domain": entry["proposal_domain"],
+                     "domain_fingerprint": settings.get("domain_fingerprint"),
                      "protocol_identity": {"task": settings["task"],
                                            "protocol": settings["protocol"],
+                                           "proposal_domain": entry["proposal_domain"],
+                                           "domain_fingerprint": settings.get("domain_fingerprint"),
                                            "dataset_sha256": settings["task_details"].get("dataset_sha256"),
                                            "split_sha256": settings["task_details"].get("split_sha256"),
                                            "source_digest": source["digest"]},
@@ -110,6 +117,8 @@ def study_report(store, study_id: int):
                 aggregate.append({"arm_id": arm["id"], "attempted_trials": attempted,
                                   "seeds_observed": len(points),
                                   "median_best_objective": statistics.median(values) if values else None,
+                                  "min_best_objective": min(values) if values else None,
+                                  "max_best_objective": max(values) if values else None,
                                   "median_observed_active_seconds": statistics.median(
                                       p["observed_active_seconds"] for p in points) if points else None})
     return {"study_id": study_id, "fingerprint": study["fingerprint"],

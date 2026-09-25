@@ -9,10 +9,18 @@ from ..storage.history import Store
 
 def protocol_differences(a: dict, b: dict, *, same_seed: bool = False) -> list[str]:
     fields = ("task", "protocol", "data_split", "eval_budget", "direction",
-              "seed_schedule", "budget", "candidate_limit")
+              "seed_schedule", "budget")
     if same_seed:
         fields += ("seed",)
     differences = [key for key in fields if a["settings"].get(key) != b["settings"].get(key)]
+    a_strategy = a["settings"].get("proposal_strategy", "local-move")
+    b_strategy = b["settings"].get("proposal_strategy", "local-move")
+    if (a_strategy == b_strategy and a_strategy in ("local-move", "global-pool")
+            and a["settings"].get("candidate_limit") != b["settings"].get("candidate_limit")):
+        differences.append("candidate_limit")
+    for field in ("proposal_domain", "domain_fingerprint"):
+        if a["settings"].get(field) != b["settings"].get(field):
+            differences.append(field)
     for key in ("dataset_sha256", "split_sha256", "model", "preprocessing", "metric",
                 "epochs", "batch_size", "device", "scheduler"):
         if (a["settings"].get("task_details", {}).get(key)
@@ -75,6 +83,9 @@ def history(store: Store, sid: int):
                           and all("input_tokens" in u and "output_tokens" in u for u in observed_usage),
                           "cost_usd": None, "cost_note": "unavailable: no pricing snapshot stored"}
     return {"session_id": sid, "task": settings["task"],
+            "proposal_strategy": settings.get("proposal_strategy", "local-move"),
+            "proposal_domain": settings.get("proposal_domain", "cifar-local-v1"
+                                            if settings["task"].startswith("cifar10") else "synthetic-local-v1"),
             "fixture": settings["task"].endswith("_fixture"),
             "status": session["status"], "stop_reason": session["stop_reason"],
             "settings": settings, "source": source, "trials": trials,

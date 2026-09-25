@@ -6,6 +6,8 @@ from pathlib import Path
 
 from .controllers.jev import live_controller
 from .controllers.random import RandomController
+from .controllers.single import SingleCandidateController
+from .core.candidate_generator import CandidateGenerator
 from .core.runner import Runner
 from .core.reporting import history, protocol_differences
 from .core.study_runner import StudyRunner
@@ -14,6 +16,7 @@ from .execution.subprocess import SubprocessExecutor
 from .storage.history import Store
 from .tasks.synthetic import SyntheticTask
 from .tasks.vision.cifar10 import CifarTask
+from .tasks.vision.cifar10.global_search import GlobalCandidateGenerator
 
 
 def compare(random_history: dict, jev_history: dict):
@@ -49,6 +52,8 @@ def _resolve_device(requested):
 def _controller_from_settings(settings):
     if settings["controller"] == "random":
         return RandomController()
+    if settings["controller"] == "single":
+        return SingleCandidateController()
     if settings["controller"] != "jev":
         raise ValueError("unknown controller in session")
     details = settings["controller_details"]
@@ -58,26 +63,35 @@ def _controller_from_settings(settings):
                             details["sdk_max_retries"], details["max_calls_per_run"])
 
 
-def _cifar_runner(store, details, timeout, controller):
+def _cifar_runner(store, settings, controller):
+    details = settings["task_details"]
     task = CifarTask(details["data_dir"], details["run_dir"],
                      split_seed=details["split_seed"], epochs=details["epochs"],
                      batch_size=details["batch_size"], device=details["device"],
                      download=False, fixture=details["dataset"] == "cifar10_fixture")
+    strategy = settings.get("proposal_strategy", "local-move")
+    generator = (CandidateGenerator(settings.get("candidate_limit", 8)) if strategy == "local-move"
+                 else GlobalCandidateGenerator(settings["proposal_domain"], strategy,
+                                               settings["candidate_limit"]))
     return Runner(store, task, controller,
-                  SubprocessExecutor(details["run_dir"], timeout))
+                  SubprocessExecutor(details["run_dir"], settings["execution_details"]["timeout"]), generator)
 
 
 def show(store: Store, sid: int):
     session = store.session(sid)
+    settings = json.loads(session["settings"])
     state = store.state(sid)
     trials = store.trials(sid)
     offers = store.db.execute("SELECT * FROM offers WHERE session_id=? ORDER BY id", (sid,)).fetchall()
     print(json.dumps({
         "session_id": sid, "status": session["status"],
-        "task": json.loads(session["settings"])["task"],
-        "fixture": json.loads(session["settings"])["task"].endswith("_fixture"),
-        "controller": json.loads(session["settings"])["controller"],
-        "controller_is_live": json.loads(session["settings"]).get("controller_details", {}).get("transport") == "typesafe-sdk",
+        "task": settings["task"],
+        "fixture": settings["task"].endswith("_fixture"),
+        "controller": settings["controller"],
+        "proposal_strategy": settings.get("proposal_strategy", "local-move"),
+        "proposal_domain": settings.get("proposal_domain", "cifar-local-v1"
+                                        if settings["task"].startswith("cifar10") else "synthetic-local-v1"),
+        "controller_is_live": settings.get("controller_details", {}).get("transport") == "typesafe-sdk",
         "decision_attempts": len(store.decision_attempts(sid)),
         "stop_reason": session["stop_reason"] or "paused or in progress",
         "attempted": state.attempted, "budget": state.budget,
@@ -129,6 +143,9 @@ def main(argv=None):
     cifar.add_argument("--split-seed", type=int, default=1729)
     cifar.add_argument("--timeout", type=float, default=900)
     cifar.add_argument("--max-new-trials", type=int)
+    cifar.add_argument("--proposal-strategy", choices=("local-move", "global-random", "global-pool",
+                                                      "tpe", "cmaes"), default="local-move")
+    cifar.add_argument("--proposal-domain", choices=("cifar-mixed-v1", "cifar-sgd-numeric-v1"))
     _controller_arguments(cifar)
     cifar_resume = sub.add_parser("cifar-resume")
     cifar_resume.add_argument("--db", required=True)
@@ -190,11 +207,23 @@ def main(argv=None):
         else:
             print(output)
         return
+    if args.command == "cifar-run":
+        if args.proposal_strategy == "local-move" and args.proposal_domain is not None:
+            parser.error("local-move does not take a global proposal domain")
+        if args.proposal_strategy != "local-move" and args.proposal_domain is None:
+            parser.error("global search requires --proposal-domain")
+        if args.proposal_strategy == "cmaes" and args.proposal_domain != "cifar-sgd-numeric-v1":
+            parser.error("CMA-ES requires the numeric domain")
     controller = None
     if args.command in ("run", "cifar-run"):
-        controller = (live_controller(args.model, args.api_timeout, args.sdk_retries,
-                                       args.max_api_calls) if args.controller == "jev"
-                      else RandomController())
+        if args.command == "cifar-run" and args.proposal_strategy in ("global-random", "tpe", "cmaes"):
+            if args.controller != "random":
+                parser.error("single-proposal strategies cannot use Jev selection")
+            controller = SingleCandidateController()
+        else:
+            controller = (live_controller(args.model, args.api_timeout, args.sdk_retries,
+                                          args.max_api_calls) if args.controller == "jev"
+                          else RandomController())
     if args.command == "cifar-run":
         run_dir = Path(args.run_dir).resolve()
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -204,6 +233,8 @@ def main(argv=None):
                          epochs=args.epochs, batch_size=args.batch_size,
                          device=device, download=args.download, fixture=args.fixture)
         store = Store(db_path)
+        generator = (CandidateGenerator() if args.proposal_strategy == "local-move"
+                     else GlobalCandidateGenerator(args.proposal_domain, args.proposal_strategy))
     else:
         store = Store(args.db)
     try:
@@ -217,15 +248,13 @@ def main(argv=None):
             Runner(store, SyntheticTask(), _controller_from_settings(settings)).run(sid, args.max_new_trials)
         elif args.command == "cifar-run":
             runner = Runner(store, task, controller,
-                            SubprocessExecutor(run_dir, args.timeout))
+                            SubprocessExecutor(run_dir, args.timeout), generator)
             sid = runner.start(args.budget, args.seed)
             runner.run(sid, args.max_new_trials)
         elif args.command == "cifar-resume":
             sid = args.session
             settings = json.loads(store.session(sid)["settings"])
-            runner = _cifar_runner(store, settings["task_details"],
-                                   settings["execution_details"]["timeout"],
-                                   _controller_from_settings(settings))
+            runner = _cifar_runner(store, settings, _controller_from_settings(settings))
             runner.run(sid, args.max_new_trials)
         else:
             sid = args.session

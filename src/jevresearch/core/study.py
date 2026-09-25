@@ -30,6 +30,8 @@ class StudyArm:
     api_timeout: float | None = None
     sdk_retries: int | None = None
     max_api_calls: int | None = None
+    proposal_strategy: str = "local-move"
+    proposal_domain: str | None = None
 
 
 @dataclass(frozen=True)
@@ -101,15 +103,29 @@ class StudySpec:
             item = StudyArm(**arm)
             if (type(item.id) is not str or not _ID.fullmatch(item.id)
                     or type(item.controller) is not str
-                    or item.controller not in ("random", "jev")):
+                    or item.controller not in ("random", "jev", "single")):
                 raise ValueError("invalid arm id or controller")
-            if item.controller == "random" and set(arm) != {"id", "controller"}:
-                raise ValueError("random arm cannot have Jev settings")
+            if item.proposal_strategy not in ("local-move", "global-random", "global-pool", "tpe", "cmaes"):
+                raise ValueError("invalid proposal strategy")
+            if item.proposal_strategy == "local-move":
+                if item.proposal_domain is not None or item.controller == "single":
+                    raise ValueError("local moves require random/Jev and no global domain")
+            elif item.proposal_domain not in ("cifar-mixed-v1", "cifar-sgd-numeric-v1"):
+                raise ValueError("global proposal domain is required")
+            if item.proposal_strategy == "cmaes" and item.proposal_domain != "cifar-sgd-numeric-v1":
+                raise ValueError("CMA-ES requires numeric domain")
+            if (item.proposal_strategy in ("tpe", "cmaes", "global-random")) != (item.controller == "single"):
+                raise ValueError("single-proposal strategies require the single selector")
+            if item.proposal_strategy == "global-pool" and item.controller == "single":
+                raise ValueError("global pool requires random or Jev selection")
+            if item.controller != "jev" and set(arm) - {"id", "controller", "proposal_strategy", "proposal_domain"}:
+                raise ValueError("non-Jev arm cannot have Jev settings")
             if item.controller == "jev":
                 item = StudyArm(item.id, item.controller, "jev-1.13.0" if item.model is None else item.model,
                                 10.0 if item.api_timeout is None else item.api_timeout,
                                 1 if item.sdk_retries is None else item.sdk_retries,
-                                1 if item.max_api_calls is None else item.max_api_calls)
+                                1 if item.max_api_calls is None else item.max_api_calls,
+                                item.proposal_strategy, item.proposal_domain)
                 if (type(item.model) is not str
                         or not re.fullmatch(r"jev-\d+\.\d+\.\d+", item.model)
                         or type(item.api_timeout) not in (int, float) or not math.isfinite(item.api_timeout)

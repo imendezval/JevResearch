@@ -206,10 +206,10 @@ src/jevresearch/
 │   ├── experiment.py
 │   ├── candidate.py
 │   ├── candidate_generator.py
+│   ├── reporting.py
 │   ├── result.py
 │   ├── objective.py
 │   ├── runner.py
-│   ├── reporting.py
 │   ├── study.py
 │   ├── study_runner.py
 │   └── study_report.py
@@ -217,7 +217,8 @@ src/jevresearch/
 ├── controllers/
 │   ├── base.py
 │   ├── random.py
-│   └── jev.py
+│   ├── jev.py
+│   └── single.py
 │
 ├── operators/
 │   ├── base.py
@@ -228,7 +229,10 @@ src/jevresearch/
 │   ├── base.py
 │   ├── synthetic.py
 │   ├── vision/
-│   │   └── cifar10/{task.py, model.py, worker.py}
+│   │   └── cifar10/{task.py, model.py, worker.py, domain.py, global_search.py}
+│
+├── optimizers/
+│   └── optuna.py
 │
 ├── execution/
 │   ├── base.py
@@ -288,6 +292,8 @@ The task defines valid operators/search space; the generator instantiates concre
 
 Later, classical optimizers can propose parameter values through this generation interface rather than being forced into selection-only logic.
 
+Phase 5 adds a task-owned `CifarDomain` and `GlobalCandidateGenerator`. The generic runner passes a read-only full trial/config view to generators; existing local generation ignores it. Global random and global-pool sample the same versioned domain, while an optional Optuna adapter replays TPE/CMA-ES ask/tell from the authoritative SQLite trial/offer ledger. The adapter has no sidecar: a pre-offer crash leaves no durable sampler effect, a saved offer is reused, and completed/failed trials are replayed once per reconstruction. Replay checks the saved Optuna trial number and proposal identity and refuses drift. CMA-ES accepts only the numeric domain. A one-candidate selector records classical proposals without a Jev call. Global samples have no parent experiment.
+
 ---
 
 ## Controller
@@ -308,12 +314,12 @@ Examples:
 ```text
 RandomController
 JevController
-TPEController
-CMAESController
-HybridController
+SingleCandidateController
 ```
 
 The controller receives generic experiment information and returns a decision.
+TPE and CMA-ES are proposal strategies, not controllers: they suggest complete
+domain configurations, then the single-candidate selector records the choice.
 
 ---
 

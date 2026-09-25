@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "task": "cifar10",
+  "protocol": "official-train-v1",
+  "data_dir": "/tmp/replace-with-official-cifar-cache",
+  "output_root": "/tmp/jev-phase5-mixed",
+  "split_seed": 1729,
+  "epochs": 1,
+  "batch_size": 256,
+  "device": "cpu",
+  "trial_timeout_seconds": 900,
+  "active_time_budget_seconds": 21600,
+  "trial_budget": 16,
+  "candidate_limit": 8,
+  "checkpoint_policy": "none",
+  "arms": [
+    {"id": "global_random", "controller": "single", "proposal_strategy": "global-random", "proposal_domain": "cifar-mixed-v1"},
+    {"id": "tpe", "controller": "single", "proposal_strategy": "tpe", "proposal_domain": "cifar-mixed-v1"},
+    {"id": "random_pool", "controller": "random", "proposal_strategy": "global-pool", "proposal_domain": "cifar-mixed-v1"},
+    {"id": "jev_pool", "controller": "jev", "proposal_strategy": "global-pool", "proposal_domain": "cifar-mixed-v1"}
+  ],
+  "seeds": [7, 11, 23]
+}
