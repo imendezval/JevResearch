@@ -7,6 +7,15 @@ from dataclasses import dataclass
 
 from ....core.experiment import digest
 
+_LR_BOUNDS = (1e-4, 1e-1)
+_WD_BOUNDS = (1e-6, 1e-2)
+_OPTIMIZERS = ("sgd", "adamw")
+_WD_MODES = ("zero", "positive")
+
+
+def _log_uniform(rng, bounds):
+    return 10 ** rng.uniform(math.log10(bounds[0]), math.log10(bounds[1]))
+
 
 @dataclass(frozen=True)
 class CifarDomain:
@@ -21,14 +30,15 @@ class CifarDomain:
         return self.name == "cifar-mixed-v1"
 
     def definition(self):
-        common = {"lr": {"kind": "float", "low": 1e-4, "high": 1e-1, "log": True}}
+        common = {"lr": {"kind": "float", "low": _LR_BOUNDS[0], "high": _LR_BOUNDS[1], "log": True}}
         if self.mixed:
-            common.update({"optimizer": {"kind": "categorical", "choices": ["sgd", "adamw"]},
-                           "wd_mode": {"kind": "categorical", "choices": ["zero", "positive"]},
-                           "weight_decay": {"kind": "float", "low": 1e-6,
-                                            "high": 1e-2, "log": True, "when": "wd_mode=positive"}})
+            common.update({"optimizer": {"kind": "categorical", "choices": list(_OPTIMIZERS)},
+                           "wd_mode": {"kind": "categorical", "choices": list(_WD_MODES)},
+                           "weight_decay": {"kind": "float", "low": _WD_BOUNDS[0],
+                                            "high": _WD_BOUNDS[1], "log": True, "when": "wd_mode=positive"}})
         else:
-            common["weight_decay"] = {"kind": "float", "low": 1e-6, "high": 1e-2, "log": True}
+            common["weight_decay"] = {"kind": "float", "low": _WD_BOUNDS[0],
+                                      "high": _WD_BOUNDS[1], "log": True}
         return {"version": self.name, "parameters": common,
                 "fixed": {"momentum": 0.9, "betas": [0.9, 0.999]}}
 
@@ -41,10 +51,10 @@ class CifarDomain:
         if set(params) - allowed or "lr" not in params:
             raise ValueError("invalid domain parameter names")
         lr = params["lr"]
-        if type(lr) not in (int, float) or not math.isfinite(lr) or not 1e-4 <= lr <= 1e-1:
+        if type(lr) not in (int, float) or not math.isfinite(lr) or not _LR_BOUNDS[0] <= lr <= _LR_BOUNDS[1]:
             raise ValueError("learning rate outside domain")
         if self.mixed:
-            if params.get("optimizer") not in ("sgd", "adamw") or params.get("wd_mode") not in ("zero", "positive"):
+            if params.get("optimizer") not in _OPTIMIZERS or params.get("wd_mode") not in _WD_MODES:
                 raise ValueError("invalid categorical branch")
             if params["wd_mode"] == "zero":
                 if "weight_decay" in params:
@@ -56,7 +66,7 @@ class CifarDomain:
         else:
             wd, optimizer = params.get("weight_decay"), "sgd"
         if (type(wd) not in (int, float) or not math.isfinite(wd)
-                or (wd != 0 and not 1e-6 <= wd <= 1e-2)):
+                or (wd != 0 and not _WD_BOUNDS[0] <= wd <= _WD_BOUNDS[1])):
             raise ValueError("weight decay outside domain")
         if not self.mixed and wd == 0:
             raise ValueError("numeric domain excludes zero weight decay")
@@ -80,33 +90,33 @@ class CifarDomain:
         return params
 
     def random_parameters(self, rng):
-        params = {"lr": 10 ** rng.uniform(-4, -1)}
+        params = {"lr": _log_uniform(rng, _LR_BOUNDS)}
         if self.mixed:
-            params["optimizer"] = rng.choice(("sgd", "adamw"))
-            params["wd_mode"] = rng.choice(("zero", "positive"))
+            params["optimizer"] = rng.choice(_OPTIMIZERS)
+            params["wd_mode"] = rng.choice(_WD_MODES)
             if params["wd_mode"] == "positive":
-                params["weight_decay"] = 10 ** rng.uniform(-6, -2)
+                params["weight_decay"] = _log_uniform(rng, _WD_BOUNDS)
         else:
-            params["weight_decay"] = 10 ** rng.uniform(-6, -2)
+            params["weight_decay"] = _log_uniform(rng, _WD_BOUNDS)
         return params
 
     def suggest(self, trial):
-        params = {"lr": trial.suggest_float("lr", 1e-4, 1e-1, log=True)}
+        params = {"lr": trial.suggest_float("lr", *_LR_BOUNDS, log=True)}
         if self.mixed:
-            params["optimizer"] = trial.suggest_categorical("optimizer", ("sgd", "adamw"))
-            params["wd_mode"] = trial.suggest_categorical("wd_mode", ("zero", "positive"))
+            params["optimizer"] = trial.suggest_categorical("optimizer", _OPTIMIZERS)
+            params["wd_mode"] = trial.suggest_categorical("wd_mode", _WD_MODES)
             if params["wd_mode"] == "positive":
-                params["weight_decay"] = trial.suggest_float("weight_decay", 1e-6, 1e-2, log=True)
+                params["weight_decay"] = trial.suggest_float("weight_decay", *_WD_BOUNDS, log=True)
         else:
-            params["weight_decay"] = trial.suggest_float("weight_decay", 1e-6, 1e-2, log=True)
+            params["weight_decay"] = trial.suggest_float("weight_decay", *_WD_BOUNDS, log=True)
         return params
 
     def distributions(self, params):
         import optuna
-        distributions = {"lr": optuna.distributions.FloatDistribution(1e-4, 1e-1, log=True)}
+        distributions = {"lr": optuna.distributions.FloatDistribution(*_LR_BOUNDS, log=True)}
         if self.mixed:
-            distributions.update({"optimizer": optuna.distributions.CategoricalDistribution(("sgd", "adamw")),
-                                  "wd_mode": optuna.distributions.CategoricalDistribution(("zero", "positive"))})
+            distributions.update({"optimizer": optuna.distributions.CategoricalDistribution(_OPTIMIZERS),
+                                  "wd_mode": optuna.distributions.CategoricalDistribution(_WD_MODES)})
         if "weight_decay" in params:
-            distributions["weight_decay"] = optuna.distributions.FloatDistribution(1e-6, 1e-2, log=True)
+            distributions["weight_decay"] = optuna.distributions.FloatDistribution(*_WD_BOUNDS, log=True)
         return distributions
