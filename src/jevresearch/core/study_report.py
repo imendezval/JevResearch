@@ -6,18 +6,7 @@ import json
 import statistics
 import time
 
-
-def _compatibility(a: dict, b: dict):
-    fields = ("task", "protocol", "data_split", "eval_budget", "direction", "seed_schedule",
-              "budget", "candidate_limit")
-    differences = [key for key in fields if a["settings"].get(key) != b["settings"].get(key)]
-    for key in ("dataset_sha256", "split_sha256", "model", "preprocessing", "metric",
-                "epochs", "batch_size", "device", "scheduler"):
-        if a["settings"]["task_details"].get(key) != b["settings"]["task_details"].get(key):
-            differences.append(f"task_details.{key}")
-    if a["source"]["digest"] != b["source"]["digest"]:
-        differences.append("source_digest")
-    return differences
+from .reporting import history, protocol_differences
 
 
 def study_report(store, study_id: int):
@@ -38,27 +27,25 @@ def study_report(store, study_id: int):
             continue
         sid = member["session_id"]
         session = store.session(sid)
-        settings = json.loads(session["settings"])
-        source = json.loads(session["source"])
-        entry = {"settings": settings, "source": source}
+        entry = history(store, sid)
+        settings, source = entry["settings"], entry["source"]
         if reference is None:
             reference = entry
         else:
             differences.extend(f"{member['arm_id']}:{member['seed']}:{field}"
-                               for field in _compatibility(reference, entry))
+                               for field in protocol_differences(reference, entry))
         own_intervals = [row for row in intervals if row["session_id"] == sid]
         observed = sum(row["finished_at"] - row["started_at"] for row in own_intervals
                        if row["status"] == "completed")
         unknown = sum(row["status"] == "unknown" for row in own_intervals)
         unknown_upper = sum(max(0.0, time.time() - row["started_at"]) for row in own_intervals
                             if row["status"] == "unknown")
-        best = None
         trajectory = []
         process_wall = 0.0
         training = 0.0
         missing_training = 0
-        for trial in store.trials(sid):
-            result = json.loads(trial["result"]) if trial["result"] else None
+        for trial in entry["trials"]:
+            result = trial["result"]
             if result:
                 process_wall += result["duration"]
                 measured = result["metrics"].get("training_seconds")
@@ -66,29 +53,24 @@ def study_report(store, study_id: int):
                     missing_training += 1
                 else:
                     training += measured
-                value = result["objective"]
-                if result["status"] == "completed" and value is not None and (
-                        best is None or value > best):
-                    best = value
             endpoint = trial["finished_at"] or trial["started_at"] or trial["created_at"]
             active = sum(row["finished_at"] - row["started_at"] for row in own_intervals
                          if row["status"] == "completed" and
-                         ((row["trial_number"] is not None and row["trial_number"] <= trial["number"])
+                         ((row["trial_number"] is not None and row["trial_number"] <= trial["trial_id"])
                           or (row["trial_number"] is None and row["finished_at"] <= endpoint)))
-            trajectory.append({"attempted_trials": trial["number"] + 1,
-                               "trial_id": trial["number"],
+            trajectory.append({"attempted_trials": trial["trial_id"] + 1,
+                               "trial_id": trial["trial_id"],
                                "candidate_id": trial["candidate_id"],
                                "status": trial["status"],
                                "objective": result["objective"] if result else None,
                                "error_type": result["error_type"] if result else None,
-                               "best_objective": best,
+                               "best_objective": trial["best_so_far"],
                                "calendar_elapsed_seconds": endpoint - session["created_at"],
                                "observed_active_seconds": active})
-        decisions = store.decision_attempts(sid)
-        controller_latency = sum(d["latency"] for d in decisions if d["latency"] is not None)
-        controller_latency_missing = sum(d["latency"] is None for d in decisions)
-        usage = [json.loads(d["response"]).get("usage") for d in decisions if d["response"]]
-        usage = [u for u in usage if u]
+        decisions = entry["decision_attempts"]
+        controller_latency = sum(d["latency_seconds"] for d in decisions if d["latency_seconds"] is not None)
+        controller_latency_missing = sum(d["latency_seconds"] is None for d in decisions)
+        controller_summary = entry["controller_summary"]
         rate = spec["compute_hourly_usd"]
         item.update({"status": session["status"], "stop_reason": session["stop_reason"],
                      "protocol_identity": {"task": settings["task"],
@@ -104,14 +86,15 @@ def study_report(store, study_id: int):
                      "training_measurements_missing": missing_training,
                      "controller_latency_seconds_observed": controller_latency,
                      "controller_latency_measurements_missing": controller_latency_missing,
-                     "input_tokens_observed": sum(u.get("input_tokens", 0) for u in usage),
-                     "output_tokens_observed": sum(u.get("output_tokens", 0) for u in usage),
+                     "input_tokens_observed": controller_summary["input_tokens_observed"],
+                     "output_tokens_observed": controller_summary["output_tokens_observed"],
                      "gpu_active_seconds": None,
                      "compute_cost": {"value_usd": process_wall * rate / 3600 if rate is not None else None,
                                       "kind": "estimate" if rate is not None else "unavailable"},
                      "jev_cost": {"value_usd": None, "kind": "unavailable: no archived pricing snapshot"},
-                     "logical_api_attempts": len(decisions), "lower_level_retries": None,
-                     "controller_failures": [{"attempt_id": d["id"], "status": d["status"],
+                     "logical_api_attempts": controller_summary["logical_calls"],
+                     "lower_level_retries": controller_summary["lower_level_retries"],
+                     "controller_failures": [{"attempt_id": d["attempt_id"], "status": d["status"],
                                               "error_code": d["error_code"]} for d in decisions
                                              if d["status"] in ("failed", "unknown")]})
         members.append(item)

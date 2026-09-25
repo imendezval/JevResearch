@@ -71,6 +71,10 @@ class HistoryTests(unittest.TestCase):
             self.assertEqual([x["attempted_trials"] for x in comparison["jev"]["trajectory"]], [1, 2])
             self.assertEqual(comparison["jev"]["controller_summary"]["logical_calls"], 1)
             self.assertEqual(comparison["jev"]["controller_summary"]["live_api_calls"], 0)
+            changed_schedule = history(store, jev_sid)
+            changed_schedule["settings"]["seed_schedule"] = "different"
+            self.assertIn("seed_schedule", compare(history(store, random_sid),
+                                                     changed_schedule)["differences"])
             store.close()
 
     def test_live_cli_requires_key_before_starting_session(self):

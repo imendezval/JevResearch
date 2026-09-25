@@ -83,6 +83,11 @@ class StudyRunnerTests(unittest.TestCase):
         study_id = runner.run()
         store = Store(runner.root / "study.sqlite")
         sid = store.study_members(study_id)[0]["session_id"]
+        from jevresearch.cli import history
+        exported = history(store, sid)
+        reported = study_report(store, study_id)["members"][0]["trajectory"]
+        self.assertEqual([row["best_so_far"] for row in exported["trials"]],
+                         [row["best_objective"] for row in reported])
         checkpoints = store.checkpoints(sid)
         self.assertEqual(sorted(row["status"] for row in checkpoints), ["pruned", "retained"])
         for row in checkpoints:
