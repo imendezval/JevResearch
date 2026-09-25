@@ -17,7 +17,7 @@ class CifarTaskTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             task = CifarTask(root / "data", root / "run", fixture=True, batch_size=16)
-            train_set, val_set = _datasets(task.details(), task.split, 1)
+            train_set, val_set = _datasets(task.details(), task.split)
             self.assertEqual(set(train_set.indices) & set(val_set.indices), set())
             self.assertEqual((len(train_set), len(val_set)), (80, 20))
             spec = make_spec(task, task.baseline(), 123, "source", None)

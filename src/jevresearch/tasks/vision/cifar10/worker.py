@@ -18,7 +18,7 @@ from .model import make_model
 from .task import dataset_identity, fixture_labels
 
 
-def _datasets(details, split, seed):
+def _datasets(details, split):
     import numpy as np
     import torch
     from torch.utils.data import Dataset, Subset
@@ -80,7 +80,7 @@ def train(payload, checkpoint_path=None):
     device = torch.device(config["device"])
     if device.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA was requested but is unavailable")
-    train_set, val_set = _datasets(details, split, spec.seed)
+    train_set, val_set = _datasets(details, split)
     generator = torch.Generator().manual_seed(spec.seed)
     train_loader = DataLoader(train_set, batch_size=config["batch_size"], shuffle=True,
                               generator=generator, num_workers=0)
@@ -176,7 +176,7 @@ def validate_checkpoint(payload, checkpoint_path):
     model.load_state_dict(torch.load(checkpoint_path, map_location=spec.config["device"],
                                      weights_only=True))
     model.eval()
-    _, validation = _datasets(payload["details"], payload["split"], spec.seed)
+    _, validation = _datasets(payload["details"], payload["split"])
     loader = DataLoader(validation, batch_size=spec.config["batch_size"], shuffle=False,
                         num_workers=0)
     correct = total = 0
