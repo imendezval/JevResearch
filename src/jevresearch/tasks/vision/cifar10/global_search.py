@@ -22,18 +22,23 @@ class GlobalCandidateGenerator:
 
     def __init__(self, domain_name: str, strategy: str, candidate_limit: int = 8):
         self.domain = CifarDomain(domain_name)
-        if strategy not in ("global-random", "global-pool", "tpe", "cmaes"):
+        if strategy not in ("global-random", "global-pool", "tpe", "tpe-pool", "cmaes"):
             raise ValueError("unknown global proposal strategy")
         if strategy == "cmaes" and self.domain.mixed:
             raise ValueError("CMA-ES cannot use the categorical mixed domain")
         if not 1 <= candidate_limit <= 8:
             raise ValueError("global candidate limit must be in [1,8]")
+        if strategy == "tpe-pool" and (not self.domain.mixed or candidate_limit < 2):
+            raise ValueError("TPE pool requires the mixed domain and width in [2,8]")
         self.strategy = strategy
-        self.max_candidates = candidate_limit if strategy == "global-pool" else 1
+        self.max_candidates = candidate_limit if strategy in ("global-pool", "tpe-pool") else 1
         self.proposer = None
         if strategy in ("tpe", "cmaes"):
             from ....optimizers.optuna import OptunaProposer
             self.proposer = OptunaProposer(strategy, self.domain, self.rejection_limit)
+        elif strategy == "tpe-pool":
+            from ....optimizers.optuna import TpePoolProposer
+            self.proposer = TpePoolProposer(self.domain, self.rejection_limit, candidate_limit)
         self._exhaustion_reason = "global proposal resample limit reached"
 
     def details(self):
@@ -55,6 +60,9 @@ class GlobalCandidateGenerator:
         return self._exhaustion_reason
 
     def generate(self, task, state, seed, source_digest, history=()):
+        if self.strategy == "tpe-pool":
+            return self.proposer.propose_pool(task, history, seed, state.attempted,
+                                              source_digest, self._candidate)
         if self.proposer is not None:
             proposed = self.proposer.propose(task, history, seed, state.attempted, source_digest)
             if proposed is None:
@@ -80,11 +88,11 @@ class GlobalCandidateGenerator:
                                                "draw_index": draw, "phase": "global"}))
                 if len(choices) == self.max_candidates:
                     break
-        candidates = []
-        for config, spec, metadata in choices:
-            parameters = {"proposal_strategy": self.strategy, "domain": self.domain.name,
-                          "domain_fingerprint": self.domain.fingerprint, **metadata}
-            cid = digest({"operator": "sample-global", "parameters": parameters,
-                          "spec": asdict(spec)})[:16]
-            candidates.append(Candidate(cid, "sample-global", parameters, None, config, spec))
-        return tuple(candidates)
+        return tuple(self._candidate(config, spec, metadata) for config, spec, metadata in choices)
+
+    def _candidate(self, config, spec, metadata):
+        parameters = {"proposal_strategy": self.strategy, "domain": self.domain.name,
+                      "domain_fingerprint": self.domain.fingerprint, **metadata}
+        cid = digest({"operator": "sample-global", "parameters": parameters,
+                      "spec": asdict(spec)})[:16]
+        return Candidate(cid, "sample-global", parameters, None, config, spec)

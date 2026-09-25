@@ -105,7 +105,8 @@ class StudySpec:
                     or type(item.controller) is not str
                     or item.controller not in ("random", "jev", "single")):
                 raise ValueError("invalid arm id or controller")
-            if item.proposal_strategy not in ("local-move", "global-random", "global-pool", "tpe", "cmaes"):
+            if item.proposal_strategy not in ("local-move", "global-random", "global-pool",
+                                              "tpe", "tpe-pool", "cmaes"):
                 raise ValueError("invalid proposal strategy")
             if item.proposal_strategy == "local-move":
                 if item.proposal_domain is not None:
@@ -114,6 +115,9 @@ class StudySpec:
                 raise ValueError("global proposal domain is required")
             if item.proposal_strategy == "cmaes" and item.proposal_domain != "cifar-sgd-numeric-v1":
                 raise ValueError("CMA-ES requires numeric domain")
+            if item.proposal_strategy == "tpe-pool" and (
+                    item.proposal_domain != "cifar-mixed-v1" or values["candidate_limit"] < 2):
+                raise ValueError("TPE pool requires mixed domain and candidate_limit in [2,8]")
             if item.proposal_strategy in ("global-random", "tpe", "cmaes"):
                 if item.controller != "single":
                     raise ValueError("single-proposal strategies require the single selector")

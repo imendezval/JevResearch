@@ -7,6 +7,8 @@ make replay deterministic; mismatches fail visibly instead of resetting search.
 
 from __future__ import annotations
 
+from dataclasses import asdict
+
 from ..core.candidate_generator import make_spec, trial_seed
 from ..storage.history import InvariantError
 
@@ -98,3 +100,98 @@ class OptunaProposer:
         return config, spec, {"domain_params": params, "optuna_trial_number": trial.number,
                               "rejections": rejected, "completed_observations": completed,
                               "phase": phase}
+
+
+class TpePoolProposer(OptunaProposer):
+    """Versioned batch policy; declined suggestions never become observations."""
+
+    policy = "tpe-pool-v1"
+
+    def __init__(self, domain, rejection_limit: int, width: int):
+        if not domain.mixed or not 2 <= width <= 8:
+            raise ValueError("TPE pool requires the mixed domain and width in [2,8]")
+        super().__init__("tpe", domain, rejection_limit)
+        self.width = width
+
+    def details(self):
+        return {"sampler": "tpe", "sampler_seed": "session_seed",
+                "sampler_options": {"n_startup_trials": 10, "constant_liar": True},
+                "sampler_version": self.optuna.__version__, "pool_policy": self.policy,
+                "pool_width": self.width, "rejection_limit_per_slot": self.rejection_limit,
+                "rejection_policy": "invalid_or_duplicate=FAIL; full_pool_or_stop",
+                "declined_policy": "declined_untrained=FAIL; slot_order_then_selected"}
+
+    def _study(self, seed):
+        sampler = self.optuna.samplers.TPESampler(
+            seed=seed, n_startup_trials=10, constant_liar=True)
+        self.optuna.logging.set_verbosity(self.optuna.logging.ERROR)
+        return self.optuna.create_study(direction="maximize", sampler=sampler)
+
+    def _pool(self, study, task, seen, source_digest, seed, index, build_candidate):
+        completed = sum(t.state == self.optuna.trial.TrialState.COMPLETE for t in study.trials)
+        phase = "startup" if completed < 10 else "adaptive"
+        drawn = []
+        for slot in range(self.width):
+            rejections = []
+            for _ in range(self.rejection_limit):
+                trial = study.ask()
+                params = self.domain.suggest(trial)
+                try:
+                    config = self.domain.config(task, params)
+                    spec = make_spec(task, config, trial_seed(seed, index), source_digest, None)
+                except ValueError:
+                    rejections.append({"trial_number": trial.number, "domain_params": params,
+                                       "reason": "invalid"})
+                    study.tell(trial, state=self.optuna.trial.TrialState.FAIL)
+                    continue
+                if spec.config_key in seen:
+                    rejections.append({"trial_number": trial.number, "domain_params": params,
+                                       "config_key": spec.config_key, "reason": "duplicate"})
+                    study.tell(trial, state=self.optuna.trial.TrialState.FAIL)
+                    continue
+                seen.add(spec.config_key)
+                metadata = {"domain_params": params, "optuna_trial_number": trial.number,
+                            "pool_slot": slot, "rejections_before_slot": rejections,
+                            "completed_observations": completed, "phase": phase,
+                            "pool_policy": self.policy}
+                drawn.append((trial, build_candidate(config, spec, metadata)))
+                break
+            else:
+                return None
+        return drawn
+
+    def propose_pool(self, task, history, seed, index, source_digest, build_candidate):
+        if not history or history[0]["status"] != "completed":
+            raise InvariantError("TPE pool requires a completed baseline")
+        study = self._study(seed)
+        baseline = history[0]
+        params = self.domain.parameters(baseline["spec"]["config"])
+        if self.domain.config(task, params) != baseline["spec"]["config"]:
+            raise InvariantError("baseline is outside proposal domain")
+        study.add_trial(self.optuna.trial.create_trial(
+            params=params, distributions=self.domain.distributions(params),
+            value=baseline["result"]["objective"]))
+        seen = {baseline["config_key"]}
+        for row in history[1:]:
+            saved = row.get("offer")
+            if not saved or row["status"] not in ("completed", "failed", "interrupted"):
+                raise InvariantError("unresolved or missing saved TPE pool")
+            drawn = self._pool(study, task, seen, source_digest, seed, row["number"], build_candidate)
+            if drawn is None or [asdict(candidate) for _, candidate in drawn] != saved["candidates"]:
+                raise InvariantError("TPE pool replay differs from saved offer")
+            selected = [(trial, candidate) for trial, candidate in drawn
+                        if candidate.id == row["candidate_id"]]
+            if (len(selected) != 1 or saved["selected_id"] != row["candidate_id"]
+                    or row["spec"] != asdict(selected[0][1].spec)
+                    or row["config_key"] != selected[0][1].spec.config_key):
+                raise InvariantError("TPE pool replay differs from saved offer or trial")
+            for trial, candidate in drawn:
+                if candidate.id != row["candidate_id"]:
+                    study.tell(trial, state=self.optuna.trial.TrialState.FAIL)
+            result = row["result"]
+            if row["status"] == "completed" and result and result["objective"] is not None:
+                study.tell(selected[0][0], result["objective"])
+            else:
+                study.tell(selected[0][0], state=self.optuna.trial.TrialState.FAIL)
+        drawn = self._pool(study, task, seen, source_digest, seed, index, build_candidate)
+        return tuple(candidate for _, candidate in drawn) if drawn is not None else ()

@@ -67,11 +67,15 @@ class StudySpecTests(unittest.TestCase):
             {"id": "jev_pool", "controller": "jev", "proposal_strategy": "global-pool",
              "proposal_domain": "cifar-mixed-v1", "model": "jev-1.13.0", "api_timeout": 4.0,
              "sdk_retries": 0, "max_api_calls": 2},
+            {"id": "tpe_random_pool", "controller": "random", "proposal_strategy": "tpe-pool",
+             "proposal_domain": "cifar-mixed-v1"},
+            {"id": "tpe_jev_pool", "controller": "jev", "proposal_strategy": "tpe-pool",
+             "proposal_domain": "cifar-mixed-v1"},
             {"id": "cma", "controller": "single", "proposal_strategy": "cmaes",
              "proposal_domain": "cifar-sgd-numeric-v1"},
         ]
         parsed = self.load({**self.raw, "arms": valid})[0].arms
-        self.assertEqual(len(parsed), 5)
+        self.assertEqual(len(parsed), 7)
         self.assertEqual((parsed[3].model, parsed[3].api_timeout, parsed[3].sdk_retries,
                           parsed[3].max_api_calls, parsed[3].proposal_strategy, parsed[3].proposal_domain),
                          ("jev-1.13.0", 4.0, 0, 2, "global-pool", "cifar-mixed-v1"))
@@ -79,6 +83,10 @@ class StudySpecTests(unittest.TestCase):
                     {**valid[1], "controller": "jev"},
                     {**valid[2], "controller": "single"},
                     {"id": "local_single", "controller": "single"},
-                    {**valid[0], "controller": "random"}):
+                    {**valid[0], "controller": "random"},
+                    {**valid[4], "controller": "single"},
+                    {**valid[4], "proposal_domain": "cifar-sgd-numeric-v1"}):
             with self.subTest(arm=arm), self.assertRaises(ValueError):
                 self.load({**self.raw, "arms": [arm]})
+        with self.assertRaises(ValueError):
+            self.load({**self.raw, "candidate_limit": 1, "arms": [valid[4]]})

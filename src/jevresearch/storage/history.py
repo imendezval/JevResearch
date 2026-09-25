@@ -200,12 +200,16 @@ class Store:
         offers = {row["id"]: row for row in self.offers(sid)}
         records = []
         for row in self.trials(sid):
-            choices = json.loads(offers[row["offer_id"]]["candidates"]) if row["offer_id"] else ()
+            offer = offers[row["offer_id"]] if row["offer_id"] else None
+            choices = json.loads(offer["candidates"]) if offer else ()
             choice = next((c for c in choices if c["id"] == row["candidate_id"]), None)
-            records.append({"number": row["number"], "status": row["status"],
+            records.append({"number": row["number"], "candidate_id": row["candidate_id"],
+                            "status": row["status"],
                             "config_key": row["config_key"], "spec": json.loads(row["spec"]),
                             "result": json.loads(row["result"]) if row["result"] else None,
-                            "proposal": choice["parameters"] if choice else None})
+                            "proposal": choice["parameters"] if choice else None,
+                            "offer": {"candidates": choices, "selected_id": offer["selected_id"]}
+                            if offer else None})
         return tuple(records)
 
     def outstanding(self, sid: int):

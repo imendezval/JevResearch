@@ -141,8 +141,9 @@ def main(argv=None):
     cifar.add_argument("--timeout", type=float, default=900)
     cifar.add_argument("--max-new-trials", type=int)
     cifar.add_argument("--proposal-strategy", choices=("local-move", "global-random", "global-pool",
-                                                      "tpe", "cmaes"), default="local-move")
+                                                      "tpe", "tpe-pool", "cmaes"), default="local-move")
     cifar.add_argument("--proposal-domain", choices=("cifar-mixed-v1", "cifar-sgd-numeric-v1"))
+    cifar.add_argument("--candidate-limit", type=int, default=8)
     _controller_arguments(cifar)
     cifar_resume = sub.add_parser("cifar-resume")
     cifar_resume.add_argument("--db", required=True)
@@ -211,6 +212,11 @@ def main(argv=None):
             parser.error("global search requires --proposal-domain")
         if args.proposal_strategy == "cmaes" and args.proposal_domain != "cifar-sgd-numeric-v1":
             parser.error("CMA-ES requires the numeric domain")
+        if not 1 <= args.candidate_limit <= 8:
+            parser.error("candidate limit must be in [1,8]")
+        if args.proposal_strategy == "tpe-pool" and (
+                args.proposal_domain != "cifar-mixed-v1" or args.candidate_limit < 2):
+            parser.error("TPE pool requires the mixed domain and candidate limit in [2,8]")
     controller = None
     if args.command in ("run", "cifar-run"):
         if args.command == "cifar-run" and args.proposal_strategy in ("global-random", "tpe", "cmaes"):
@@ -230,7 +236,7 @@ def main(argv=None):
                          epochs=args.epochs, batch_size=args.batch_size,
                          device=device, download=args.download, fixture=args.fixture)
         store = Store(db_path)
-        generator = cifar_generator(args.proposal_strategy, args.proposal_domain)
+        generator = cifar_generator(args.proposal_strategy, args.proposal_domain, args.candidate_limit)
     else:
         store = Store(args.db)
     try:

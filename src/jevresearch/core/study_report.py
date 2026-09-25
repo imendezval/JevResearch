@@ -73,10 +73,13 @@ def study_report(store, study_id: int):
         controller_latency = sum(d["latency_seconds"] for d in decisions if d["latency_seconds"] is not None)
         controller_latency_missing = sum(d["latency_seconds"] is None for d in decisions)
         controller_summary = entry["controller_summary"]
+        offers = entry["offers"]
         rate = spec["compute_hourly_usd"]
         item.update({"status": session["status"], "stop_reason": session["stop_reason"],
                      "proposal_strategy": entry["proposal_strategy"],
                      "proposal_domain": entry["proposal_domain"],
+                     "pool_policy": settings.get("pool_policy"),
+                     "pool_width": settings.get("pool_width"),
                      "domain_fingerprint": settings.get("domain_fingerprint"),
                      "protocol_identity": {"task": settings["task"],
                                            "protocol": settings["protocol"],
@@ -86,6 +89,17 @@ def study_report(store, study_id: int):
                                            "split_sha256": settings["task_details"].get("split_sha256"),
                                            "source_digest": source["digest"]},
                      "trajectory": trajectory, "observed_active_seconds": observed,
+                     "offers": offers,
+                     "proposal_summary": {"offers": len(offers),
+                                          "accepted": sum(o["accepted_count"] for o in offers),
+                                          "rejected": sum(o["rejected_count"] for o in offers),
+                                          "declined_untrained": sum(o["declined_untrained_count"]
+                                                                    for o in offers),
+                                          "proposal_seconds_observed": None},
+                     "training_attempts": len(entry["trials"]),
+                     "training_completed": sum(t["status"] == "completed" for t in entry["trials"]),
+                     "training_failed": sum(t["status"] == "failed" for t in entry["trials"]),
+                     "training_interrupted": sum(t["status"] == "interrupted" for t in entry["trials"]),
                      "unknown_active_intervals": unknown,
                      "unknown_active_upper_bound_seconds": unknown_upper,
                      "process_wall_seconds": process_wall,
