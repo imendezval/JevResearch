@@ -14,6 +14,8 @@ from jevresearch.core import ExperimentResult, ExperimentSpec
 from jevresearch.core.candidate_generator import trial_seed
 from jevresearch.core.reporting import history, protocol_differences
 from jevresearch.core.runner import Runner
+from jevresearch.core.study_report import study_report
+from jevresearch.core.study_runner import StudyRunner
 from jevresearch.storage.history import InvariantError, Store
 from jevresearch.tasks.vision.cifar10 import CifarTask
 from jevresearch.tasks.vision.cifar10.global_search import GlobalCandidateGenerator
@@ -256,6 +258,49 @@ class TpePoolTests(unittest.TestCase):
         self.assertEqual(protocol_differences(base, other), ["candidate_limit"])
         other["settings"]["proposal_strategy"] = "tpe"
         self.assertEqual(protocol_differences(base, other), [])
+
+    def test_fixture_study_reports_pool_and_single_tpe_arms(self):
+        try:
+            import torch
+            import torchvision
+        except ImportError:
+            self.skipTest("vision dependencies are optional")
+        spec_path = self.root / "study.json"
+        spec_path.write_text(json.dumps({
+            "version": 1, "task": "cifar10_fixture", "protocol": "fixture-v1",
+            "data_dir": str(self.root / "data"), "output_root": str(self.root / "study"),
+            "trial_budget": 2, "active_time_budget_seconds": 300,
+            "candidate_limit": 2, "seeds": [7],
+            "arms": [
+                {"id": "jev_tpe_pool", "controller": "jev", "proposal_strategy": "tpe-pool",
+                 "proposal_domain": "cifar-mixed-v1"},
+                {"id": "random_tpe_pool", "controller": "random", "proposal_strategy": "tpe-pool",
+                 "proposal_domain": "cifar-mixed-v1"},
+                {"id": "single_tpe", "controller": "single", "proposal_strategy": "tpe",
+                 "proposal_domain": "cifar-mixed-v1"},
+            ]}))
+        with patch("jevresearch.core.study_runner.live_controller",
+                   side_effect=lambda *args: JevController(FakeJev())):
+            study_id = StudyRunner(spec_path).run(max_new_trials=6)
+        study_store = Store(self.root / "study" / "study.sqlite")
+        try:
+            report = study_report(study_store, study_id)
+            self.assertTrue(report["compatible"])
+            members = {m["arm_id"]: m for m in report["members"]}
+            self.assertEqual({m["status"] for m in members.values()}, {"stopped"})
+            self.assertEqual({m["training_attempts"] for m in members.values()}, {2})
+            jev = members["jev_tpe_pool"]
+            self.assertEqual(jev["pool_policy"], "tpe-pool-v1")
+            self.assertEqual(jev["proposal_summary"]["declined_untrained"], 1)
+            self.assertEqual(jev["logical_api_attempts"], 1)
+            self.assertEqual(jev["offers"][0]["selected_trial"]["status"], "completed")
+            self.assertEqual([{k: v for k, v in c.items() if k != "audit_status"}
+                              for c in jev["offers"][0]["candidates"]],
+                             [{k: v for k, v in c.items() if k != "audit_status"}
+                              for c in members["random_tpe_pool"]["offers"][0]["candidates"]])
+            self.assertEqual(members["single_tpe"]["proposal_summary"]["accepted"], 1)
+        finally:
+            study_store.close()
 
 
 if __name__ == "__main__":

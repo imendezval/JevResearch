@@ -294,6 +294,8 @@ Later, classical optimizers can propose parameter values through this generation
 
 Phase 5 adds a task-owned `CifarDomain` and `GlobalCandidateGenerator`. The generic runner passes a read-only full trial/config view to generators; existing local generation ignores it. Global random and global-pool sample the same versioned domain, while an optional Optuna adapter replays TPE/CMA-ES ask/tell from the authoritative SQLite trial/offer ledger. The adapter has no sidecar: a pre-offer crash leaves no durable sampler effect, a saved offer is reused, and completed/failed trials are replayed once per reconstruction. Replay checks the saved Optuna trial number and proposal identity and refuses drift. CMA-ES accepts only the numeric domain. A one-candidate selector records classical proposals without a Jev call. Global samples have no parent experiment.
 
+The `tpe-pool-v1` policy asks pinned Optuna TPE for 2–8 distinct mixed-domain candidates per saved offer. Accepted asks remain running until the pool is complete; duplicate or invalid draws become internal sampler failures. Jev or random selects one saved candidate to train. Declined candidates are recorded as `declined_untrained`, closed as internal sampler failures during replay, and never become experiment attempts or objective observations. Replay checks the entire ordered offer and closes declined slots before telling the selected measured result. The single-candidate `tpe` and `cmaes` baselines keep their separate policies.
+
 ---
 
 ## Controller
@@ -318,8 +320,8 @@ SingleCandidateController
 ```
 
 The controller receives generic experiment information and returns a decision.
-TPE and CMA-ES are proposal strategies, not controllers: they suggest complete
-domain configurations, then the single-candidate selector records the choice.
+TPE and CMA-ES are proposal strategies, not controllers. Single-proposal baselines
+use `SingleCandidateController`; `tpe-pool` offers TPE candidates to Jev or random.
 
 ---
 
@@ -721,6 +723,13 @@ TPE/CMA-ES low-level parameter search
 
 This enables **Option B**.
 
+The implemented Option B bridge is `tpe-pool-v1` on the mixed CIFAR domain:
+Jev and random select from identical first-offer TPE rules, while single-TPE
+remains a comparator. A CMA-ES/Jev pool is deferred because standard CMA-ES
+needs fitness for a population; training only one selected member would not
+supply the generation's required outcomes. A separate population evaluation
+and budget policy is needed before that combination is meaningful.
+
 ---
 
 ## Phase 6 — Autoregressive LM Escalation
@@ -844,16 +853,14 @@ controller calibration
 
 JevResearch should scale along three independent axes.
 
-## Controller scalability
+## Selector and proposer scalability
 
 Swap:
 
 ```text
-Random
-→ Jev
-→ TPE
-→ CMA-ES
-→ Hybrid
+Selectors: Random → Jev → Single
+Proposers: local moves → global random → TPE → CMA-ES
+Bridge: TPE pool → Jev or Random selector
 ```
 
 without touching tasks.

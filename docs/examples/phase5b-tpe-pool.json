@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "task": "cifar10",
+  "protocol": "official-train-v1",
+  "data_dir": "/tmp/replace-with-official-cifar-cache",
+  "output_root": "/tmp/jev-phase5b-tpe-pool",
+  "split_seed": 1729,
+  "epochs": 1,
+  "batch_size": 256,
+  "device": "cpu",
+  "trial_timeout_seconds": 900,
+  "active_time_budget_seconds": 21600,
+  "trial_budget": 16,
+  "candidate_limit": 4,
+  "checkpoint_policy": "none",
+  "arms": [
+    {"id": "jev_tpe_pool", "controller": "jev", "proposal_strategy": "tpe-pool", "proposal_domain": "cifar-mixed-v1"},
+    {"id": "random_tpe_pool", "controller": "random", "proposal_strategy": "tpe-pool", "proposal_domain": "cifar-mixed-v1"},
+    {"id": "single_tpe", "controller": "single", "proposal_strategy": "tpe", "proposal_domain": "cifar-mixed-v1"}
+  ],
+  "seeds": [7, 11, 23]
+}
