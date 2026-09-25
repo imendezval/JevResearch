@@ -12,12 +12,11 @@ from ..storage.history import InvariantError
 
 
 class OptunaProposer:
-    rejection_limit = 32
-
-    def __init__(self, strategy: str, domain):
+    def __init__(self, strategy: str, domain, rejection_limit: int):
         if strategy not in ("tpe", "cmaes") or (strategy == "cmaes" and domain.mixed):
             raise ValueError("CMA-ES requires the numeric domain; unknown Optuna strategy")
         self.strategy, self.domain = strategy, domain
+        self.rejection_limit = rejection_limit
         try:
             import optuna
         except ImportError as exc:

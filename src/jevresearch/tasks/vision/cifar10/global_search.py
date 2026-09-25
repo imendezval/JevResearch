@@ -33,20 +33,19 @@ class GlobalCandidateGenerator:
         self.proposer = None
         if strategy in ("tpe", "cmaes"):
             from ....optimizers.optuna import OptunaProposer
-            self.proposer = OptunaProposer(strategy, self.domain)
+            self.proposer = OptunaProposer(strategy, self.domain, self.rejection_limit)
         self._exhaustion_reason = "global proposal resample limit reached"
 
     def details(self):
         details = {"proposal_strategy": self.strategy, "proposal_domain": self.domain.name,
                    "domain_definition": self.domain.definition(),
-                   "domain_fingerprint": self.domain.fingerprint,
-                   "sampler": "python-random" if self.proposer is None else self.strategy,
-                   "sampler_version": "python-random-v1" if self.proposer is None else self.proposer.optuna.__version__,
-                   "rejection_limit": self.rejection_limit}
+                   "domain_fingerprint": self.domain.fingerprint}
         if self.proposer is not None:
             details.update(self.proposer.details())
         else:
-            details.update({"sampler_seed": "sha256(search_seed:attempted_trials)",
+            details.update({"sampler": "python-random", "sampler_version": "python-random-v1",
+                            "rejection_limit": self.rejection_limit,
+                            "sampler_seed": "sha256(search_seed:attempted_trials)",
                             "sampler_options": {"categorical": "uniform", "positive_float": "log-uniform",
                                                 "max_draws": self.rejection_limit}})
         return details
