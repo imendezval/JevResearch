@@ -2,10 +2,9 @@
 
 import argparse
 import json
-import os
 from pathlib import Path
 
-from .controllers.jev import JevController, TypeSafeSDKTransport
+from .controllers.jev import live_controller
 from .controllers.random import RandomController
 from .core.runner import Runner
 from .core.study_runner import StudyRunner
@@ -117,13 +116,6 @@ def _resolve_device(requested):
     return "cuda" if torch.cuda.is_available() else "cpu"
 
 
-def _live_controller(model="jev-1.13.0", timeout=10.0, retries=1, max_calls=1):
-    if not os.environ.get("TYPESAFE_API_KEY"):
-        raise RuntimeError("TYPESAFE_API_KEY is required for a live Jev session")
-    return JevController(TypeSafeSDKTransport(timeout=timeout, max_retries=retries),
-                         model=model, max_calls=max_calls)
-
-
 def _controller_from_settings(settings):
     if settings["controller"] == "random":
         return RandomController()
@@ -132,7 +124,7 @@ def _controller_from_settings(settings):
     details = settings["controller_details"]
     if details["transport"] != "typesafe-sdk":
         raise RuntimeError("fake Jev sessions are test-only and cannot be resumed through the live CLI")
-    return _live_controller(details["model"], details["request_timeout"],
+    return live_controller(details["model"], details["request_timeout"],
                             details["sdk_max_retries"], details["max_calls_per_run"])
 
 
@@ -270,7 +262,7 @@ def main(argv=None):
         return
     controller = None
     if args.command in ("run", "cifar-run"):
-        controller = (_live_controller(args.model, args.api_timeout, args.sdk_retries,
+        controller = (live_controller(args.model, args.api_timeout, args.sdk_retries,
                                        args.max_api_calls) if args.controller == "jev"
                       else RandomController())
     if args.command == "cifar-run":

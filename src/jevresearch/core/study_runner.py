@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import time
 from pathlib import Path
 
-from ..controllers.jev import JevController, TypeSafeSDKTransport
+from ..controllers.jev import live_controller
 from ..controllers.random import RandomController
 from ..execution.ownership import study_lock
 from ..execution.subprocess import SubprocessExecutor
@@ -31,10 +30,8 @@ class StudyRunner:
     def _controller(self, arm: StudyArm):
         if arm.controller == "random":
             return RandomController()
-        if not os.environ.get("TYPESAFE_API_KEY"):
-            raise RuntimeError("TYPESAFE_API_KEY unavailable")
-        return JevController(TypeSafeSDKTransport(arm.api_timeout, arm.sdk_retries),
-                             model=arm.model, max_calls=arm.max_api_calls)
+        return live_controller(arm.model, arm.api_timeout, arm.sdk_retries,
+                               arm.max_api_calls)
 
     def _runner(self, store: Store, arm: StudyArm, seed: int):
         controller = self._controller(arm)

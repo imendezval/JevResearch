@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import os
 import re
 from dataclasses import dataclass
 from importlib import metadata
@@ -232,3 +233,11 @@ class JevController:
             return ValidatedChoice(choice, response)
         except (KeyError, TypeError, ValueError) as exc:
             raise InvalidJevResponse(str(exc)) from None
+
+
+def live_controller(model: str, timeout: float, retries: int, max_calls: int) -> JevController:
+    """Build the credentialed SDK controller used by CLI and studies."""
+    if not os.environ.get("TYPESAFE_API_KEY"):
+        raise RuntimeError("TYPESAFE_API_KEY is required for a live Jev session")
+    return JevController(TypeSafeSDKTransport(timeout=timeout, max_retries=retries),
+                         model=model, max_calls=max_calls)
