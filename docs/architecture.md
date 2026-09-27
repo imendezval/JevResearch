@@ -1070,37 +1070,3 @@ It is the broader question:
 > **When does autonomous research actually require System-2 reasoning?**
 
 If JevResearch can reach similar or better performance while using dramatically fewer autoregressive LM calls—and this generalizes across vision, language modeling, and tabular tasks—that becomes a much stronger paper direction.
-
----
-
-# 16. Immediate Development Scope
-
-Do not build everything at once.
-
-The current target should be only:
-
-```text
-Phase 1
-+
-Phase 2
-```
-
-Meaning:
-
-```text
-generic core abstractions
-+
-CIFAR-10 task with one fixed small ConvNet
-+
-learning rate, weight decay, optimizer operators only
-+
-RandomController
-+
-reliable experiment logging
-```
-
-First milestone:
-
-> **CIFAR-10 + generic experiment loop + predefined operators + random selection.**
-
-Once that works cleanly, expand outward rather than redesigning inward.
