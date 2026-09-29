@@ -8,6 +8,7 @@ import re
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
+from ..controllers.jev import DEFAULT_QUESTION_VERSION, QUESTION_VERSIONS
 from .experiment import digest
 
 _ID = re.compile(r"^[a-zA-Z][a-zA-Z0-9_-]{0,31}$")
@@ -30,6 +31,7 @@ class StudyArm:
     api_timeout: float | None = None
     sdk_retries: int | None = None
     max_api_calls: int | None = None
+    question_version: str | None = None
     proposal_strategy: str = "local-move"
     proposal_domain: str | None = None
 
@@ -129,13 +131,16 @@ class StudySpec:
                 item = replace(item, model="jev-1.13.0" if item.model is None else item.model,
                                api_timeout=10.0 if item.api_timeout is None else item.api_timeout,
                                sdk_retries=1 if item.sdk_retries is None else item.sdk_retries,
-                               max_api_calls=1 if item.max_api_calls is None else item.max_api_calls)
+                               max_api_calls=1 if item.max_api_calls is None else item.max_api_calls,
+                               question_version=DEFAULT_QUESTION_VERSION if item.question_version is None
+                               else item.question_version)
                 if (type(item.model) is not str
                         or not re.fullmatch(r"jev-\d+\.\d+\.\d+", item.model)
                         or type(item.api_timeout) not in (int, float) or not math.isfinite(item.api_timeout)
                         or item.api_timeout <= 0 or type(item.sdk_retries) is not int
                         or item.sdk_retries not in (0, 1)
-                        or type(item.max_api_calls) is not int or item.max_api_calls < 1):
+                        or type(item.max_api_calls) is not int or item.max_api_calls < 1
+                        or item.question_version not in QUESTION_VERSIONS):
                     raise ValueError("invalid Jev arm settings")
             parsed.append(item)
         if len({a.id for a in parsed}) != len(parsed):

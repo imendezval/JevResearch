@@ -30,6 +30,8 @@ immutable experiment → train from scratch → validation score
 
 The task defines what is valid; the candidate generator builds complete experiment specs; the controller only chooses among them. The selected trial is recorded *before* execution. A supervised worker returns a result or failure, and the next search state is rebuilt from the ledger. This keeps proposal quality, decision quality, and training outcomes separable.
 
+Jev's default `next-trial-v2` request gives it the named objective and fixed training protocol, a bounded set of past configurations with their measured results, and scale-aware comparisons for each offered candidate. The earlier `next-trial-v1` request remains available through `--question-version`; the version is saved with each campaign.
+
 ## What you can study today
 
 The real-data task is CIFAR-10 with one fixed small ConvNet. Each hyperparameter configuration starts from scratch and trains for the same number of epochs. Search maximizes accuracy on a fixed 45,000/5,000 train/validation split; the official test set is never used during search. The current mixed domain varies learning rate, weight decay, and SGD versus AdamW. Model and data protocol stay fixed so the selector is the variable under study.

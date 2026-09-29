@@ -111,6 +111,17 @@ class CifarTask:
                 "epochs": self.eval_budget, "batch_size": self.batch_size,
                 "device": self.device, "scheduler": "none"}
 
+    def decision_context(self):
+        return {"metric": "final validation top-1 accuracy (fraction from 0 to 1)",
+                "evaluation": {"train_from_scratch": True, "epochs": self.eval_budget,
+                               "model": "small-convnet-v1", "scheduler": "none",
+                               "train_examples": len(self.split["train_indices"]),
+                               "validation_examples": len(self.split["val_indices"]),
+                               "test_used_during_search": False,
+                               "fixture": self.fixture},
+                "search_fields": {"optimizer": "categorical", "lr": "log10",
+                                  "weight_decay": "zero_or_log10"}}
+
     def worker_payload(self, spec):
         return {"spec": asdict(spec), "details": self.details(), "split": self.split}
 

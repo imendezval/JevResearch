@@ -4,7 +4,8 @@ import argparse
 import json
 from pathlib import Path
 
-from .controllers.jev import live_controller
+from .controllers.jev import (DEFAULT_QUESTION_VERSION, LEGACY_QUESTION_VERSION,
+                              QUESTION_VERSIONS, live_controller)
 from .controllers.random import RandomController
 from .controllers.single import SingleCandidateController
 from .core.runner import Runner
@@ -59,7 +60,8 @@ def _controller_from_settings(settings):
     if details["transport"] != "typesafe-sdk":
         raise RuntimeError("fake Jev sessions are test-only and cannot be resumed through the live CLI")
     return live_controller(details["model"], details["request_timeout"],
-                            details["sdk_max_retries"], details["max_calls_per_run"])
+                            details["sdk_max_retries"], details["max_calls_per_run"],
+                            details.get("question_version", LEGACY_QUESTION_VERSION))
 
 
 def _cifar_runner(store, settings, controller):
@@ -108,6 +110,8 @@ def _controller_arguments(parser):
     parser.add_argument("--api-timeout", type=float, default=10.0)
     parser.add_argument("--sdk-retries", type=int, choices=(0, 1), default=1)
     parser.add_argument("--max-api-calls", type=int, default=1)
+    parser.add_argument("--question-version", choices=QUESTION_VERSIONS,
+                        default=DEFAULT_QUESTION_VERSION)
 
 
 def main(argv=None):
@@ -225,7 +229,7 @@ def main(argv=None):
             controller = SingleCandidateController()
         else:
             controller = (live_controller(args.model, args.api_timeout, args.sdk_retries,
-                                          args.max_api_calls) if args.controller == "jev"
+                                          args.max_api_calls, args.question_version) if args.controller == "jev"
                           else RandomController())
     if args.command == "cifar-run":
         run_dir = Path(args.run_dir).resolve()

@@ -11,11 +11,19 @@ from typing import Any, Literal
 
 from ..core import Candidate, SearchState, canonical
 
-QUESTION_VERSION = "next-trial-v1"
+LEGACY_QUESTION_VERSION = "next-trial-v1"
+DEFAULT_QUESTION_VERSION = "next-trial-v2"
+QUESTION_VERSIONS = (LEGACY_QUESTION_VERSION, DEFAULT_QUESTION_VERSION)
 INSTRUCTIONS = (
     "Choose one offered experiment ID to try next for the stated objective. "
     "Use the completed results and the stated configuration changes as evidence. "
     "Return exactly one supplied ID; do not invent a trial. Numeric comparisons are provided in state."
+)
+V2_INSTRUCTIONS = (
+    "Choose exactly one offered experiment ID to train next. Maximize the best final "
+    "objective achieved within the remaining trial slots. Consider both plausible "
+    "objective improvement and what the result could teach later proposals. "
+    "Use only the supplied observations; do not invent a trial."
 )
 MAX_CANDIDATES = 8
 MAX_REQUEST_BYTES = 8192
@@ -90,6 +98,81 @@ def _description(candidate: Candidate, incumbent: dict | None, stats: dict[str, 
     return f"operator={operator}; changes={canonical(changes)}; full_config={canonical(config)}"
 
 
+def _search_config(config: dict, fields: dict, stats: dict[str, int]) -> dict:
+    return {name: _safe(config.get(name), stats, name) for name in fields}
+
+
+def _distance(left: dict, right: dict, fields: dict) -> float:
+    """Simple, declared search-space distance; never an objective prediction."""
+    total = 0.0
+    for name, scale in fields.items():
+        a, b = left.get(name), right.get(name)
+        if a is None or b is None:
+            total += 1.0
+            continue
+        if scale == "categorical":
+            total += float(a != b)
+        elif scale == "linear":
+            total += abs(a - b)
+        elif scale == "log10":
+            total += abs(math.log10(a / b))
+        elif scale == "zero_or_log10":
+            total += (0.0 if a == b == 0 else 1.0 if a == 0 or b == 0
+                      else abs(math.log10(a / b)))
+        else:
+            raise ValueError(f"unsupported search field scale: {scale}")
+    return round(total, 6)
+
+
+def _scale_changes(config: dict, incumbent: dict | None, fields: dict) -> dict:
+    old = incumbent or {}
+    changes = {}
+    for name, scale in fields.items():
+        before, after = old.get(name), config.get(name)
+        if before is None or before == after:
+            continue
+        if scale == "categorical":
+            changes[name] = {"from": before, "to": after}
+        elif scale == "log10":
+            changes[name] = {"log10_ratio_to_best": round(math.log10(after / before), 4)}
+        elif scale == "zero_or_log10":
+            changes[name] = {"from_branch": "zero" if before == 0 else "positive",
+                             "to_branch": "zero" if after == 0 else "positive"}
+            if before > 0 and after > 0:
+                changes[name]["log10_ratio_to_best"] = round(math.log10(after / before), 4)
+        elif scale != "linear":
+            raise ValueError(f"unsupported search field scale: {scale}")
+    return changes
+
+
+def _completed(history: tuple[dict, ...]) -> list[dict]:
+    return [row for row in history if row["status"] == "completed"
+            and row["result"] is not None
+            and isinstance(row["result"].get("objective"), (int, float))
+            and math.isfinite(row["result"]["objective"])]
+
+
+def _history_evidence(history: tuple[dict, ...], state: SearchState, direction: str,
+                      fields: dict, stats: dict[str, int], nearest: tuple[dict, ...]) -> list[dict]:
+    completed = _completed(history)
+    ordered = sorted(completed, key=lambda row: row["result"]["objective"],
+                     reverse=direction == "max")
+    selected = {}
+    for label, rows in (("nearest", nearest),
+                        ("strong", ordered[:4]),
+                        ("recent", list(reversed(history[-5:]))),
+                        ("weak", list(reversed(ordered[-2:])))):
+        for row in rows:
+            number = row["number"]
+            if number == state.best_trial_id or number in selected:
+                continue
+            selected[number] = {"trial_id": number, "reason": label,
+                                "status": row["status"],
+                                "objective": row["result"]["objective"] if row["result"] else None,
+                                "config": _search_config(row["spec"]["config"], fields, stats)}
+    return list(selected.values())
+
+
 @dataclass(frozen=True)
 class ValidatedChoice:
     selected_id: str
@@ -148,43 +231,89 @@ class JevController:
     kind = "jev"
     selection_mode: Literal["audited"] = "audited"
 
-    def __init__(self, transport, model: str = "jev-1.13.0", max_calls: int = 1):
-        if not model or max_calls < 1:
-            raise ValueError("Jev model and positive logical call limit are required")
+    def __init__(self, transport, model: str = "jev-1.13.0", max_calls: int = 1,
+                 question_version: str = DEFAULT_QUESTION_VERSION):
+        if not model or max_calls < 1 or question_version not in QUESTION_VERSIONS:
+            raise ValueError("Jev model, positive call limit, and supported question version are required")
         self.transport = transport
         self.model = model
         self.max_calls = max_calls
+        self.question_version = question_version
 
     def details(self):
-        return {"model": self.model, "question_version": QUESTION_VERSION,
+        return {"model": self.model, "question_version": self.question_version,
                 "transport": self.transport.kind,
                 "sdk_version": getattr(self.transport, "sdk_version", None),
                 "request_timeout": getattr(self.transport, "timeout", None),
                 "sdk_max_retries": getattr(self.transport, "max_retries", None),
                 "max_calls_per_run": self.max_calls}
 
-    def prepare(self, state: SearchState, candidates: tuple[Candidate, ...], direction: str) -> dict:
+    def prepare(self, state: SearchState, candidates: tuple[Candidate, ...], direction: str,
+                history: tuple[dict, ...] = (), context: dict | None = None) -> dict:
         if not 1 <= len(candidates) <= MAX_CANDIDATES:
             raise ValueError("Jev requires one to eight saved candidates")
         if len({c.id for c in candidates}) != len(candidates):
             raise ValueError("duplicate candidate IDs")
         stats = {"redacted_fields": 0, "truncated_fields": 0}
         first = candidates[0]
-        criteria = {c.id: _description(c, state.incumbent_config, stats) for c in candidates}
-        body = {"state": {"task": _safe(first.spec.task, stats),
-                          "protocol": _safe(first.spec.protocol, stats),
-                          "objective_direction": direction,
-                          "remaining_trial_slots": state.budget - state.attempted,
-                          "best_completed": {"trial_id": state.best_trial_id,
-                                             "objective": state.best_objective},
-                          "recent_outcomes": _recent(state, direction)},
-                "model": self.model,
-                "questions": {"next_trial": {"type": "choice",
-                                             "instructions": INSTRUCTIONS,
+        if self.question_version == LEGACY_QUESTION_VERSION:
+            criteria = {c.id: _description(c, state.incumbent_config, stats) for c in candidates}
+            evidence = {"task": _safe(first.spec.task, stats),
+                        "protocol": _safe(first.spec.protocol, stats),
+                        "objective_direction": direction,
+                        "remaining_trial_slots": state.budget - state.attempted,
+                        "best_completed": {"trial_id": state.best_trial_id,
+                                           "objective": state.best_objective},
+                        "recent_outcomes": _recent(state, direction)}
+            instructions, trim_key, protected = INSTRUCTIONS, "recent_outcomes", 0
+        else:
+            if context is None or not isinstance(context.get("search_fields"), dict):
+                raise ValueError("v2 requires task decision context")
+            fields = context["search_fields"]
+            completed = _completed(history)
+            criteria = {}
+            nearest_rows = []
+            for candidate in candidates:
+                nearest = (min(completed,
+                               key=lambda row: (_distance(candidate.config,
+                                                          row["spec"]["config"], fields), row["number"]))
+                           if completed else None)
+                if nearest is not None:
+                    nearest_rows.append(nearest)
+                extra = {"scale_aware_changes": _scale_changes(candidate.config,
+                                                               state.incumbent_config, fields),
+                         "nearest_completed": {"trial_id": nearest["number"],
+                                               "search_distance": _distance(candidate.config,
+                                                                            nearest["spec"]["config"], fields)}
+                         if nearest else None}
+                criteria[candidate.id] = (_description(candidate, state.incumbent_config, stats)
+                                          + "; evidence=" + canonical(_safe(extra, stats)))
+            safe_context = _safe(context, stats)
+            evidence = {"task": _safe(first.spec.task, stats),
+                        "protocol": _safe(first.spec.protocol, stats),
+                        "objective": {"metric": safe_context["metric"], "direction": direction},
+                        "evaluation": safe_context["evaluation"],
+                        "search_fields": safe_context["search_fields"],
+                        "search_distance": "sum of categorical mismatches, linear gaps, and absolute log10 ratios; zero-to-positive transitions cost one",
+                        "remaining_trial_slots": state.budget - state.attempted,
+                        "incumbent": {"trial_id": state.best_trial_id,
+                                      "objective": state.best_objective,
+                                      "config": _search_config(state.incumbent_config or {}, fields, stats)},
+                        "history_evidence": _history_evidence(history, state, direction,
+                                                              fields, stats, tuple(nearest_rows))}
+            instructions, trim_key = V2_INSTRUCTIONS, "history_evidence"
+            protected = len({row["number"] for row in nearest_rows
+                             if row["number"] != state.best_trial_id})
+        body = {"state": evidence, "model": self.model,
+                "questions": {"next_trial": {"type": "choice", "instructions": instructions,
                                              "criteria": criteria}}}
         dropped = 0
-        while len(canonical(body).encode()) > MAX_REQUEST_BYTES and body["state"]["recent_outcomes"]:
-            body["state"]["recent_outcomes"].pop(0)
+        while (len(canonical(body).encode()) > MAX_REQUEST_BYTES
+               and len(body["state"][trim_key]) > protected):
+            if self.question_version == LEGACY_QUESTION_VERSION:
+                body["state"][trim_key].pop(0)
+            else:
+                body["state"][trim_key].pop()
             dropped += 1
         if len(canonical(body).encode()) > MAX_REQUEST_BYTES:
             raise ValueError("Jev request exceeds fixed byte limit")
@@ -235,9 +364,10 @@ class JevController:
             raise InvalidJevResponse(str(exc)) from None
 
 
-def live_controller(model: str, timeout: float, retries: int, max_calls: int) -> JevController:
+def live_controller(model: str, timeout: float, retries: int, max_calls: int,
+                    question_version: str = DEFAULT_QUESTION_VERSION) -> JevController:
     """Build the credentialed SDK controller used by CLI and studies."""
     if not os.environ.get("TYPESAFE_API_KEY"):
         raise RuntimeError("TYPESAFE_API_KEY is required for a live Jev session")
     return JevController(TypeSafeSDKTransport(timeout=timeout, max_retries=retries),
-                         model=model, max_calls=max_calls)
+                         model=model, max_calls=max_calls, question_version=question_version)

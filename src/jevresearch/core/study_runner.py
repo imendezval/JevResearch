@@ -34,7 +34,7 @@ class StudyRunner:
         if arm.controller == "single":
             return SingleCandidateController()
         return live_controller(arm.model, arm.api_timeout, arm.sdk_retries,
-                               arm.max_api_calls)
+                               arm.max_api_calls, arm.question_version)
 
     def _runner(self, store: Store, arm: StudyArm, seed: int):
         controller = self._controller(arm)

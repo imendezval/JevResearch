@@ -93,7 +93,9 @@ class JevLedgerTests(unittest.TestCase):
                                                      json.loads(self.store.session(sid)["source"])["digest"])
         oid = self.store.save_offer(sid, state, candidates, self.store.session(sid)["rng_state"])
         offer = self.store.offer(sid, oid)
-        prepared = self.controller.prepare(state, candidates, "max")
+        prepared = self.controller.prepare(state, candidates, "max",
+                                           self.store.proposal_history(sid),
+                                           self.runner.task.decision_context())
         aid = self.store.begin_decision(sid, oid, prepared, self.controller.details())
         raw = self.transport.invoke(prepared["body"])
         validated = self.controller.validate(prepared, raw)
@@ -147,7 +149,9 @@ class JevLedgerTests(unittest.TestCase):
         candidates = self.runner.generator.generate(self.runner.task, state, 3,
                                                      json.loads(self.store.session(sid)["source"])["digest"])
         oid = self.store.save_offer(sid, state, candidates, self.store.session(sid)["rng_state"])
-        prepared = self.controller.prepare(state, candidates, "max")
+        prepared = self.controller.prepare(state, candidates, "max",
+                                           self.store.proposal_history(sid),
+                                           self.runner.task.decision_context())
         self.store.begin_decision(sid, oid, prepared, self.controller.details())
         self.runner.run(sid)
         self.assertEqual([a["status"] for a in self.store.decision_attempts(sid)],

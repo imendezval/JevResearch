@@ -90,7 +90,8 @@ class Runner:
         return settings, source
 
     def _audited_select(self, sid: int, offer, candidates: tuple[Candidate, ...],
-                        state: SearchState, direction: str, calls: int) -> int:
+                        state: SearchState, direction: str, calls: int,
+                        history: tuple[dict, ...] = ()) -> int:
         previous = self.store.validated_decision(offer["id"])
         if previous is not None:
             match = [c for c in candidates if c.id == previous["selected_id"]]
@@ -103,7 +104,8 @@ class Runner:
             return calls
         prepared = self.store.first_decision_request(offer["id"])
         if prepared is None:
-            prepared = self.controller.prepare(state, candidates, direction)
+            prepared = self.controller.prepare(state, candidates, direction, history,
+                                               self.task.decision_context())
         attempt_id = self.store.begin_decision(sid, offer["id"], prepared,
                                                self.controller.details())
         calls += 1
@@ -180,9 +182,10 @@ class Runner:
             if max_new_trials is not None and new >= max_new_trials:
                 return state
             offer = self.store.outstanding(sid)
+            proposal_history = self.store.proposal_history(sid)
             if offer is None:
                 candidates = self.generator.generate(self.task, state, settings["seed"], source["digest"],
-                                                     self.store.proposal_history(sid))
+                                                     proposal_history)
                 if not candidates:
                     self.store.stop(sid, self.generator.exhaustion_reason)
                     return state
@@ -193,7 +196,7 @@ class Runner:
                                       "history": tuple(json.loads(offer["state"])["history"])})
             if audited:
                 calls = self._audited_select(sid, offer, candidates, snapshot,
-                                             settings["direction"], calls)
+                                             settings["direction"], calls, proposal_history)
                 if self.store.session(sid)["status"] == "paused":
                     return self.store.state(sid)
                 continue

@@ -261,6 +261,7 @@ The implemented task contract is:
 ```python
 class Task:
     def baseline(self) -> dict: ...
+    def decision_context(self) -> dict: ...
     def proposals(self, state) -> list: ...
     def validate(self, config) -> None: ...
 ```
@@ -322,6 +323,17 @@ SingleCandidateController
 The controller receives generic experiment information and returns a decision.
 TPE and CMA-ES are proposal strategies, not controllers. Single-proposal baselines
 use `SingleCandidateController`; `tpe-pool` offers TPE candidates to Jev or random.
+
+The default Jev request is `next-trial-v2`; `next-trial-v1` remains selectable for
+historical request behavior. The task supplies a compact metric, evaluation protocol,
+and search-field scales through `decision_context()`. The generic runner passes that
+context and trial/config records from the existing ledger to the controller.
+Jev's bounded Choice request includes the incumbent, selected strong/recent/weak
+configuration–result examples, and scale-aware descriptions of the saved candidates.
+Nearest completed trials are referenced by ID and included once in the shared state.
+The request version is recorded with each campaign, and a saved request is reused
+unchanged if a decision is retried. Generic controller and runner code do not import
+the CIFAR task.
 
 ---
 

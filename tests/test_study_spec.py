@@ -27,6 +27,10 @@ class StudySpecTests(unittest.TestCase):
         spec, overrides = self.load()
         self.assertEqual(spec.candidate_limit, 8)
         self.assertEqual(spec.arms[1].model, "jev-1.13.0")
+        self.assertEqual(spec.arms[1].question_version, "next-trial-v2")
+        legacy = self.load({**self.raw, "arms": [{"id": "jev", "controller": "jev",
+                                                 "question_version": "next-trial-v1"}]})[0]
+        self.assertEqual(legacy.arms[0].question_version, "next-trial-v1")
         self.assertEqual(spec.fingerprint("source"), self.load()[0].fingerprint("source"))
         self.assertNotEqual(spec.fingerprint("source"), spec.fingerprint("changed"))
         overridden, overrides = StudySpec.load(self.path, data_dir=self.tmp.name + "/other")
@@ -42,6 +46,9 @@ class StudySpecTests(unittest.TestCase):
             with self.subTest(change=change):
                 with self.assertRaises(ValueError):
                     self.load({**self.raw, **change})
+        with self.assertRaises(ValueError):
+            self.load({**self.raw, "arms": [{"id": "j", "controller": "jev",
+                                             "question_version": "unknown"}]})
 
     def test_registry_refuses_changed_spec_and_migration_keeps_history(self):
         spec, overrides = self.load()

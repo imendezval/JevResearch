@@ -21,6 +21,11 @@ class SyntheticTask:
     def baseline(self) -> dict[str, int]:
         return {"x": 0, "y": 0}
 
+    def decision_context(self) -> dict[str, Any]:
+        return {"metric": "negative squared distance on the synthetic grid",
+                "evaluation": "one independent deterministic evaluation per configuration",
+                "search_fields": {"x": "linear", "y": "linear"}}
+
     def validate(self, config: dict[str, Any]) -> None:
         if set(config) != {"x", "y"} or any(type(v) is not int or v < -3 or v > 3 for v in config.values()):
             raise ValueError("synthetic config requires integer x,y in [-3,3]")
